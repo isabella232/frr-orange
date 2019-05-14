@@ -137,6 +137,8 @@ struct isis_circuit *isis_circuit_new(void)
 
 	circuit->mtc = mpls_te_circuit_new();
 
+	circuit->sre = sr_circuit_new();
+
 	circuit_mt_init(circuit);
 
 	QOBJ_REG(circuit, isis_circuit);

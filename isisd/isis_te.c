@@ -56,6 +56,7 @@
 #include "isisd/isis_adjacency.h"
 #include "isisd/isis_spf.h"
 #include "isisd/isis_te.h"
+#include "isisd/isis_sr.h"
 
 const char *mode2text[] = {"Disable", "Area", "AS", "Emulate"};
 
@@ -294,6 +295,54 @@ uint8_t subtlvs_len(struct mpls_te_circuit *mtc)
 	mtc->length = (uint8_t)length;
 
 	return mtc->length;
+}
+
+/* Create new SR Circuit context */
+struct sr_extended *sr_circuit_new(void)
+{
+	struct sr_extended *sre;
+
+	zlog_debug("SR(%): Create new Segment Routing Circuit context",
+		   __func__);
+
+	sre = XCALLOC(MTYPE_ISIS_SR, sizeof(struct sr_extended));
+
+	return sre;
+}
+/* Copy SUB TLVs parameters into a buffer - No space verification are performed
+ */
+/* Caller must verify before that there is enough free space in the buffer */
+uint8_t add_sr_subtlvs(uint8_t *buf, struct sr_circuit *srp)
+{
+	uint8_t size;
+	uint8_t length = 0;
+	uint8_t *tlvs = buf;
+
+	zlog_debug("SR (%): Add SR Sub TLVs to buffer", __func__);
+
+	if (srp == NULL) {
+		zlog_debug(
+			"SR (%s): Abort! No SR Circuit available has been specified",
+			__func__);
+		return 0;
+	}
+
+	/* Create buffer if not provided */
+	if (buf == NULL) {
+		zlog_debug("SR (%): Abort! No Buffer has been specified",
+			   __func__);
+		return 0;
+	}
+
+	/* Adjacency SID primary */
+	if (SUBTLV_TYPE(mtc->admin_grp) != 0) {
+		size = SUBTLV_SIZE(&(mtc->admin_grp.header));
+		memcpy(tlvs, &(srp->adj), size);
+		tlvs += size;
+		length += size;
+	}
+
+	return length;
 }
 
 /* Following are various functions to set MPLS TE parameters */
@@ -741,7 +790,7 @@ static uint8_t print_subtlv_te_metric(struct sbuf *buf, int indent,
 	te_metric = tlv->value[2] | tlv->value[1] << 8 | tlv->value[0] << 16;
 	sbuf_push(buf, indent, "Traffic Engineering Metric: %u\n", te_metric);
 
-	return (SUBTLV_HDR_SIZE + SUBTLV_DEF_SIZE);
+	return (SUBTLV_HDR_SIZE + TE_SUBTLV_TE_METRIC_SIZE);
 }
 
 static uint8_t print_subtlv_ras(struct sbuf *buf, int indent,
@@ -863,6 +912,50 @@ static uint8_t print_subtlv_use_bw(struct sbuf *buf, int indent,
 	return (SUBTLV_HDR_SIZE + SUBTLV_DEF_SIZE);
 }
 
+static uint8_t print_subtlv_adj_sid(struct sbuf *buf, int indent,
+	   struct ext_subtlv_adj_sid *tlv)
+{
+
+	sbuf_push(buf, indent,
+		  "Adjacency-SID: %" PRIu32 ", Weight: %" PRIu8
+		  ", Flags: F:%c B:%c, V:%c, L:%c, S:%c, P:%c\n",
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_VFLG
+			  ? GET_LABEL(tlv->value)
+			  : GET_INDEX(tlv->value),
+		  tlv->weight,
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_FFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_BFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_VFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_LFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_SFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_PFLG ? '1' : '0');
+
+	return (SUBTLV_HDR_SIZE + EXT_SUBTLV_ADJ_SID_SIZE);
+}
+
+static uint8_t print_subtlv_lan_adj_sid(struct sbuf *buf, int indent,
+	   struct ext_subtlv_lan_adj_sid *tlv)
+{
+
+	sbuf_push(buf, indent,
+		  "Lan-Adjacency-SID: %" PRIu32 ", Weight: %" PRIu8
+		  ", Flags: F:%c B:%c, V:%c, L:%c, S:%c, P:%c\n"
+		  "  Neighbor-ID: %s\n",
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_VFLG
+			  ? GET_LABEL(tlv->value)
+			  : GET_INDEX(tlv->value),
+		  tlv->weight,
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_FFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_BFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_VFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_LFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_SFLG ? '1' : '0',
+		  tlv->flags & EXT_SUBTLV_LINK_ADJ_SID_PFLG ? '1' : '0',
+		  isis_format_id(tlv->neighbor_id, 6));
+
+	return (SUBTLV_HDR_SIZE + EXT_SUBTLV_LAN_ADJ_SID_SIZE);
+}
+
 static uint8_t print_unknown_tlv(struct sbuf *buf, int indent,
 				 struct subtlv_header *tlvh)
 {
@@ -876,10 +969,12 @@ static uint8_t print_unknown_tlv(struct sbuf *buf, int indent,
 		sbuf_push(buf, indent + 2, "Dump: [00]");
 		rtn = 1; /* initialize end of line counter */
 		for (i = 0; i < tlvh->length; i++) {
-			sbuf_push(buf, 0, " %#.2x", v[i]);
+			sbuf_push(buf, 0, " %#.2x", v[i + 2]);
 			if (rtn == 8) {
 				sbuf_push(buf, 0, "\n");
-				sbuf_push(buf, indent + 8, "[%.2x]", i + 1);
+				if ((i + 1) < tlvh->length)
+					sbuf_push(buf, indent + 8, "[%.2x]",
+						  i + 1);
 				rtn = 1;
 			} else
 				rtn++;
@@ -967,7 +1062,7 @@ void mpls_te_print_detail(struct sbuf *buf, int indent,
 				(struct te_subtlv_unrsv_bw *)tlvh);
 			break;
 		case TE_SUBTLV_TE_METRIC:
-			if (tlvh->length != SUBTLV_DEF_SIZE) {
+			if (tlvh->length != TE_SUBTLV_TE_METRIC_SIZE) {
 				sbuf_push(buf, indent, "TLV size does not match expected size for Traffic Engineering Metric!\n");
 				return;
 			}
@@ -990,6 +1085,24 @@ void mpls_te_print_detail(struct sbuf *buf, int indent,
 			sum += print_subtlv_rip(buf, indent,
 						(struct te_subtlv_rip *)tlvh);
 			break;
+		/* Segment Routing Adjacency */
+		case EXT_SUBTLV_ADJ_SID:
+			if (tlvh->length != EXT_SUBTLV_ADJ_SID_SIZE) {
+				sbuf_push(buf, indent, "TLV size does not match expected size for Adjacency SID!\n");
+				return;
+			}
+			sum += print_subtlv_adj_sid(buf, indent,
+				(struct ext_subtlv_adj_sid *)tlvh);
+			break;
+		case EXT_SUBTLV_LAN_ADJ_SID:
+			if (tlvh->length != EXT_SUBTLV_LAN_ADJ_SID_SIZE) {
+				sbuf_push(buf, indent, "TLV size does not match expected size for LAN-Adjacency SID!\n");
+				return;
+			}
+			sum += print_subtlv_lan_adj_sid(buf, indent,
+				(struct ext_subtlv_lan_adj_sid *)tlvh);
+			break;
+		/* Extended Metrics */
 		case TE_SUBTLV_AV_DELAY:
 			if (tlvh->length != SUBTLV_DEF_SIZE) {
 				sbuf_push(buf, indent, "TLV size does not match expected size for Average Link Delay!\n");

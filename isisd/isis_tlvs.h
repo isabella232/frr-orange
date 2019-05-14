@@ -25,6 +25,8 @@
 
 #include "openbsd-tree.h"
 #include "prefix.h"
+#include "isisd/isis_te.h"
+#include "isisd/isis_sr.h"
 
 struct lspdb_head;
 struct isis_subtlvs;
@@ -130,6 +132,22 @@ struct isis_threeway_adj {
 	uint32_t neighbor_circuit_id;
 };
 
+/* RFC 4971 & RFC 7981 */
+struct isis_router_cap {
+	struct in_addr router_id;
+	uint8_t flags;
+
+	/* draft-ietf-segment-routing-extensions-24 */
+	struct sr_subtlv_sid_label_range srgb;
+	struct sr_subtlv_sr_algorithm algo;
+	/* RFC 8491 */
+	struct sr_subtlv_node_msd msd;
+};
+
+#define ISIS_ROUTER_CAP_FLAG_S	0x01
+#define ISIS_ROUTER_CAP_FLAG_D	0x02
+#define ISIS_ROUTER_CAP_SIZE	5
+
 struct isis_item;
 struct isis_item {
 	struct isis_item *next;
@@ -233,6 +251,7 @@ struct isis_tlvs {
 	struct isis_item_list ipv6_reach;
 	struct isis_mt_item_list mt_ipv6_reach;
 	struct isis_threeway_adj *threeway_adj;
+	struct isis_router_cap *router_cap;
 	struct isis_spine_leaf *spine_leaf;
 };
 
@@ -258,6 +277,7 @@ enum isis_tlv_context {
 	ISIS_CONTEXT_SUBTLV_NE_REACH,
 	ISIS_CONTEXT_SUBTLV_IP_REACH,
 	ISIS_CONTEXT_SUBTLV_IPV6_REACH,
+	ISIS_CONTEXT_SUBTLV_ROUTER_CAP,
 	ISIS_CONTEXT_MAX
 };
 
@@ -295,6 +315,7 @@ enum isis_tlv_type {
 	ISIS_TLV_IPV6_REACH = 236,
 	ISIS_TLV_MT_IPV6_REACH = 237,
 	ISIS_TLV_THREE_WAY_ADJ = 240,
+	ISIS_TLV_ROUTER_CAPABILITY = 242,
 	ISIS_TLV_MAX = 256,
 
 	ISIS_SUBTLV_PREFIX_SID = 3,

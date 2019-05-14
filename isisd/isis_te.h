@@ -95,6 +95,7 @@ struct subtlv_header {
 #define SUBTLV_LEN(stlvh)      stlvh.header.length
 #define SUBTLV_VAL(stlvh)      stlvh.value
 #define SUBTLV_DATA(stlvh)     stlvh + SUBTLV_HDR_SIZE
+#define IS_SUBTLV_SET(stlvh)   (SUBTLV_TYPE(stlvh) != 0)
 
 #define SUBTLV_DEF_SIZE		4
 
@@ -172,6 +173,37 @@ struct te_subtlv_rip {
 	struct in_addr value;	/* Remote ASBR IP address */
 } __attribute__((__packed__));
 
+/* Segment Routing Adjacency & LAN Adjacency Segment ID
+ * draft-ietf-isis-segment-routing-extensions-24.txt */
+
+/* Adj-SID and LAN-Ajd-SID sub-TLVs flags */
+#define EXT_SUBTLV_LINK_ADJ_SID_FFLG	0x80
+#define EXT_SUBTLV_LINK_ADJ_SID_BFLG	0x40
+#define EXT_SUBTLV_LINK_ADJ_SID_VFLG	0x20
+#define EXT_SUBTLV_LINK_ADJ_SID_LFLG	0x10
+#define EXT_SUBTLV_LINK_ADJ_SID_SFLG	0x08
+#define EXT_SUBTLV_LINK_ADJ_SID_PFLG	0x04
+
+/* Adj-SID SubTLV - section 2.2.1 */
+#define EXT_SUBTLV_ADJ_SID		31
+#define EXT_SUBTLV_ADJ_SID_SIZE		5
+struct ext_subtlv_adj_sid {
+	struct subtlv_header header;
+	uint8_t flags;
+	uint8_t weight;
+	uint32_t value;
+} __attribute__((__packed__));
+
+/* LAN Adj-SID SubTLV -  section 2.2.2 */
+#define EXT_SUBTLV_LAN_ADJ_SID		32
+#define EXT_SUBTLV_LAN_ADJ_SID_SIZE	11
+struct ext_subtlv_lan_adj_sid {
+	struct subtlv_header header;
+	uint8_t flags;
+	uint8_t weight;
+	uint8_t neighbor_id[6];
+	uint32_t value;
+} __attribute__((__packed__));
 
 /* TE Metric Extensions - RFC 7810 */
 /* Link Sub-TLV: Average Link Delay */

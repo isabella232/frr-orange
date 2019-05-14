@@ -59,6 +59,14 @@ struct isis_lsp {
 	bool flooding_circuit_scoped;
 };
 
+typedef enum lsp_event {
+	LSP_ADD,
+	LSP_UPD,
+	LSP_DEL,
+	LSP_INC,
+	LSP_TICK
+};
+
 extern int lspdb_compare(const struct isis_lsp *a, const struct isis_lsp *b);
 DECLARE_RBTREE_UNIQ(lspdb, struct isis_lsp, dbe, lspdb_compare)
 
