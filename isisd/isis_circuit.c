@@ -135,9 +135,12 @@ struct isis_circuit *isis_circuit_new(void)
 	}
 #endif /* ifndef FABRICD */
 
-	circuit->mtc = mpls_te_circuit_new();
-
-	circuit->sre = sr_circuit_new();
+	/* Extended subTLVs and Prefix SID are initialized latter
+	 *  - TE extended subTLVs when MPLS-TE is activated
+	 *  - Adjacent SID subTLVs and Prefix SID when SR is activated
+	 */
+	circuit->ext = NULL;
+	circuit->pref_sid = NULL;
 
 	circuit_mt_init(circuit);
 
@@ -268,8 +271,11 @@ void isis_circuit_add_addr(struct isis_circuit *circuit,
 		ipv4->prefix = connected->address->u.prefix4;
 		listnode_add(circuit->ip_addrs, ipv4);
 
-		/* Update MPLS TE Local IP address parameter */
-		set_circuitparams_local_ipaddr(circuit->mtc, ipv4->prefix);
+		/* Update Local IP address parameter if MPLS TE is enable */
+		if (circuit->ext && IS_MPLS_TE(circuit->ext)) {
+			circuit->ext->local_addr.s_addr = ipv4->prefix.s_addr;
+			SET_SUBTLV(circuit->ext, EXT_LOCAL_ADDR);
+		}
 
 		if (circuit->area)
 			lsp_regenerate_schedule(circuit->area, circuit->is_type,

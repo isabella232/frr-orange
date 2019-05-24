@@ -63,8 +63,8 @@
 	(((srgb.range[0] << 16) | (srgb.range[1] << 8) | (srgb.range[2]))    \
 	 & GET_RANGE_SIZE_MASK)
 #define GET_RANGE_BASE(srgb)                                                 \
-	(SUBTLV_LEN(srgb.lower) == 3 ? GET_LABEL(srgb.lower.value)           \
-				     : GET_INDEX(srgb.lower.value))
+	(SUBTLV_LEN(srgb.lower_bound) == 3 ? GET_LABEL(srgb.lower_bound)     \
+				         : GET_INDEX(srgb.lower_bound))
 
 #define SET_LABEL(label)		((label << 8) & SET_LABEL_MASK)
 #define SET_INDEX(index)		htonl(index)
@@ -83,96 +83,14 @@
 #define SID_INDEX	4
 #define SID_INDEX_SIZE(U) (U)
 
-/* SID/Label Sub TLV - section 2.3 */
-#define SUBTLV_SID_LABEL		1
-#define SUBTLV_SID_LABEL_SIZE		6
-struct subtlv_sid_label {
-	/* Length is 3 (20 rightmost bits MPLS label) or 4 (32 bits SID) */
-	struct subtlv_header header;
-	uint32_t value;
-} __attribute__((__packed__));
-
 /*
- * Following section defines Segment Routing sub-TLVs (tag, length, value)
- * structures, used in Router Information TLV-242 defined in RFC7981.
+ * subTLVs definition, serialization and de-serialization
+ * are defined in isis_tlvs.[c,h]
  */
 
-/* SID/Label Range TLV - section 3.1 */
-#define SR_SUBTLV_SID_LABEL_RANGE	2
-#define SR_SUBTLV_SID_LABEL_RANGE_SIZE	12
-struct sr_subtlv_sid_label_range {
-	struct subtlv_header header;
-#define SR_SUBTLV_SRGB_FLAG_I		0x80
-#define SR_SUBTLV_SRGB_FLAG_V		0x40
-	uint8_t flags; /* Bit 0: I = IPv4, Bit 1: V = IPv6 */
-/* Only 24 upper most bits are significant */
-#define SID_RANGE_LABEL_LENGTH	3
-	uint8_t range[SID_RANGE_LABEL_LENGTH];
-	/* A SID/Label sub-TLV will follow. */
-	struct subtlv_sid_label lower;
-} __attribute__((__packed__));
-
-#define IS_SR_IPV4(srgb)	(srgb.flags & SR_SUBTLV_SRGB_FLAG_I)
-#define IS_SR_IPV6(srgb)	(srgb.flags & SR_SUBTLV_SRGB_FLAG_V)
-
-/* SR-Algorithm TLV - section 3.2 */
-#define SR_SUBTLV_ALGORITHM		19
-#define SR_SUBTLV_ALGORITHM_SIZE	4
-struct sr_subtlv_sr_algorithm {
-	struct subtlv_header header;
-#define SR_ALGORITHM_SPF         0
-#define SR_ALGORITHM_STRICT_SPF  1
-#define SR_ALGORITHM_UNSET       255
-#define ALGORITHM_COUNT          2
-	/* Only 4 algorithms supported in this code */
-	uint8_t value[ALGORITHM_COUNT];
-} __attribute__((__packed__));
-
-/* Node/MSD TLV as per RFC 8491 - Node MSD only */
-#define SR_SUBTLV_NODE_MSD		23
-#define SR_SUBTLV_NODE_MSD_SIZE		4
-struct sr_subtlv_node_msd {
-	struct subtlv_header header;
-	uint8_t subtype; /* always = 1 (Base MPLS Imposition MSD */
-	uint8_t value;
-} __attribute__((__packed__));
-
-/* SR Local block and SRMS are not yet supported */
-
 /*
- * Following section defines Segment Routing sub-TLVs (tag, length, value)
- * structures, used in Extended IPv4 Reachability TLV-135 and
- * Extended IS Reachabillity TLV-22 defined in RFC5305.
+ * Following section define structure for Segment Routing management
  */
-
-/* Prefix SID sub-TLVs flags */
-#define EXT_SUBTLV_PREFIX_SID_RFLG	0x80
-#define EXT_SUBTLV_PREFIX_SID_NFLG	0x40
-#define EXT_SUBTLV_PREFIX_SID_PFLG	0x20
-#define EXT_SUBTLV_PREFIX_SID_EFLG	0x10
-#define EXT_SUBTLV_PREFIX_SID_VFLG	0x08
-#define EXT_SUBTLV_PREFIX_SID_LFLG	0x04
-
-/* Prefix SID Sub-TLV - section 2.1 */
-#define EXT_SUBTLV_PREFIX_SID		3
-#define EXT_SUBTLV_PREFIX_SID_SIZE	8
-struct ext_subtlv_prefix_sid {
-	struct subtlv_header header;
-	uint8_t flags;
-	uint8_t algorithm;
-	uint32_t value;
-} __attribute__((__packed__));
-
-/*
- * Following section define structure used to manage Segment Routing
- * information and TLVs / SubTLVs
- */
-
-/* Structure aggregating SRGB info retrieved from an lsa */
-struct sr_srgb {
-	uint32_t range_size;
-	uint32_t lower_bound;
-};
 
 /* SID type to make difference between loopback interfaces and others */
 enum sid_type { PREF_SID, ADJ_SID, LAN_ADJ_SID };
@@ -200,23 +118,25 @@ struct isis_sr_db {
 	/* Local SR info announced in Router Capability TLV 242 */
 
 	/* Algorithms supported by the node */
-	uint8_t algo[ALGORITHM_COUNT];
+	uint8_t algo[SR_ALGORITHM_COUNT];
 	/*
 	 * Segment Routing Global Block i.e. label range
 	 * Only one range supported in this code
 	 */
-	struct sr_srgb srgb;
+	struct isis_srgb srgb;
 	/* Maximum SID Depth supported by the node */
 	uint8_t msd;
 };
 
-/* Structure aggregating all received SR info from LSAs by node */
+#define IS_SR(a)	(a->srdb && a->srdb->enabled)
+
+/* Structure aggregating all received SR info from LSPs by node */
 struct sr_node {
 	struct in_addr router_id; /* used to identify sender of LSP */
 
-	uint8_t algo[ALGORITHM_COUNT]; /* Algorithms supported by the node */
+	uint8_t algo[SR_ALGORITHM_COUNT]; /* Algorithms supported by the node */
 	/* Segment Routing Global Block i.e. label range */
-	struct sr_srgb srgb;
+	struct isis_srgb srgb;
 	uint8_t msd; /* Maximum SID Depth */
 
 	/* List of Prefix & Link advertise by this node */
@@ -280,32 +200,7 @@ struct sr_prefix {
 	struct sr_node *nexthop;
 };
 
-/* Structure aggregating all Segment Routing information for a circuit */
-struct sr_extended {
-	uint8_t type; /* Extended IS (22) or Extended IP (135) */
-
-	/* Reference pointer to a Zebra-interface. */
-	struct interface *ifp;
-
-	/* Area info in which this SR link belongs to. */
-	struct isis_area *area;
-
-	/* Flags to manage this link parameters. */
-	uint32_t flags;
-
-	/* SID type: Node, Adjacency or LAN Adjacency */
-	enum sid_type stype;
-
-	/* extended link/prefix TLV information */
-	struct ext_tlv_prefix prefix;
-	struct ext_subtlv_prefix_sid node_sid;
-	struct ext_tlv_link link;
-	struct ext_subtlv_adj_sid adj_sid[2];
-	struct ext_subtlv_lan_adj_sid lan_sid[2];
-};
-
 /* Prototypes definition */
-struct sr_extended *sr_circuit_new(void);
 #ifdef SR_FUNC
 /* Segment Routing initialization functions */
 extern int isis_sr_init(void);

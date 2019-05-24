@@ -167,6 +167,8 @@ struct isis_area {
 	struct list *mt_settings;
 	/* MPLS-TE settings */
 	struct mpls_te_area *mta;
+	/* Segment Routing settings */
+	struct isis_sr_db *srdb;
 	int ipv6_circuits;
 	bool purge_originator;
 	/* Counters */
@@ -281,6 +283,7 @@ extern struct thread_master *master;
 #define DEBUG_FLOODING                   (1<<9)
 #define DEBUG_BFD                        (1<<10)
 #define DEBUG_TX_QUEUE                   (1<<11)
+#define DEBUG_SR                         (1<<12)
 
 #define lsp_debug(...)                                                         \
 	do {                                                                   \

@@ -201,10 +201,10 @@ static int process_p2p_hello(struct iih_info *iih)
 
 	/* Update MPLS TE Remote IP address parameter if possible */
 	if (IS_MPLS_TE(iih->circuit->area->mta)
-	    && IS_MPLS_TE(iih->circuit->mtc)
+	    && IS_EXT_TE(iih->circuit->ext)
 	    && adj->ipv4_address_count)
-		set_circuitparams_rmt_ipaddr(iih->circuit->mtc,
-					     adj->ipv4_addresses[0]);
+		iih->circuit->ext->neigh_addr.s_addr =
+			adj->ipv4_addresses[0].s_addr;
 
 	/* lets take care of the expiry */
 	THREAD_TIMER_OFF(adj->t_expire);

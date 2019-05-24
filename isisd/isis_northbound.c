@@ -1410,12 +1410,12 @@ static int isis_instance_mpls_te_create(enum nb_event event,
 	 * 2) MPLS-TE was once enabled then disabled, and now enabled again.
 	 */
 	for (ALL_LIST_ELEMENTS_RO(area->circuit_list, node, circuit)) {
-		if (circuit->mtc == NULL || IS_FLOOD_AS(circuit->mtc->type))
+		if (circuit->ext == NULL)
 			continue;
 
-		if (!IS_MPLS_TE(circuit->mtc)
+		if (!IS_EXT_TE(circuit->ext)
 		    && HAS_LINK_PARAMS(circuit->interface))
-			circuit->mtc->status = enable;
+			isis_link_params_update(circuit, circuit->interface);
 		else
 			continue;
 
@@ -1446,11 +1446,16 @@ static int isis_instance_mpls_te_destroy(enum nb_event event,
 
 	/* Flush LSP if circuit engage */
 	for (ALL_LIST_ELEMENTS_RO(area->circuit_list, node, circuit)) {
-		if (circuit->mtc == NULL || (circuit->mtc->status == disable))
+		if (circuit->ext == NULL || (!IS_EXT_TE(circuit->ext)))
 			continue;
 
-		/* disable MPLS_TE Circuit */
-		circuit->mtc->status = disable;
+		/* Reset TE subTLVs keeping SR one's */
+		if (IS_SUBTLV(circuit->ext, EXT_ADJ_SID))
+			circuit->ext->status = EXT_ADJ_SID;
+		else if (IS_SUBTLV(circuit->ext, EXT_LAN_ADJ_SID))
+			circuit->ext->status = EXT_LAN_ADJ_SID;
+		else
+			circuit->ext->status = 0;
 
 		/* Re-originate circuit without STD_TE & GMPLS parameters */
 		if (circuit->area)

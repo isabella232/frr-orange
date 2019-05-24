@@ -59,13 +59,13 @@ struct isis_lsp {
 	bool flooding_circuit_scoped;
 };
 
-typedef enum lsp_event {
+typedef enum _lsp_event_t {
 	LSP_ADD,
 	LSP_UPD,
 	LSP_DEL,
-	LSP_INC,
-	LSP_TICK
-};
+	LSP_TICK,
+	LSP_INC
+} lsp_event_t;
 
 extern int lspdb_compare(const struct isis_lsp *a, const struct isis_lsp *b);
 DECLARE_RBTREE_UNIQ(lspdb, struct isis_lsp, dbe, lspdb_compare)
@@ -130,6 +130,10 @@ int lsp_print_all(struct vty *vty, struct lspdb_head *head, char detail,
 		  char dynhost);
 /* sets SRMflags for all active circuits of an lsp */
 void lsp_set_all_srmflags(struct isis_lsp *lsp, bool set);
+
+/* Hook for LSP event */
+DECLARE_HOOK(isis_lsp_event_hook, (struct isis_lsp *lsp, lsp_event_t event),
+	     (lsp, event));
 
 #define lsp_flood(lsp, circuit) \
 	_lsp_flood((lsp), (circuit), __func__, __FILE__, __LINE__)
