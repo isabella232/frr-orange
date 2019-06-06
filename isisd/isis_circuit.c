@@ -61,6 +61,9 @@
 
 DEFINE_QOBJ_TYPE(isis_circuit)
 
+DEFINE_HOOK(isis_circuit_type_update_hook, (struct isis_circuit * circuit),
+	    (circuit))
+
 /*
  * Prototypes.
  */
@@ -486,6 +489,8 @@ void isis_circuit_if_add(struct isis_circuit *circuit, struct interface *ifp)
 
 	for (ALL_LIST_ELEMENTS(ifp->connected, node, nnode, conn))
 		isis_circuit_add_addr(circuit, conn);
+
+	hook_call(isis_circuit_type_update_hook, circuit);
 }
 
 void isis_circuit_if_del(struct isis_circuit *circuit, struct interface *ifp)
@@ -1361,6 +1366,8 @@ void isis_circuit_circ_type_set(struct isis_circuit *circuit, int circ_type)
 		circuit->circ_type_config = circ_type;
 		isis_csm_state_change(ISIS_ENABLE, circuit, area);
 	}
+
+	hook_call(isis_circuit_type_update_hook, circuit);
 }
 
 int isis_circuit_mt_enabled_set(struct isis_circuit *circuit, uint16_t mtid,

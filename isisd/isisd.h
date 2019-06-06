@@ -30,6 +30,8 @@
 #include "isisd/isis_redist.h"
 #include "isisd/isis_pdu_counter.h"
 #include "isisd/isis_circuit.h"
+#include "isisd/isis_tlvs.h"
+#include "isisd/isis_sr.h"
 #include "isis_flags.h"
 #include "isis_lsp.h"
 #include "isis_memory.h"
@@ -168,7 +170,7 @@ struct isis_area {
 	/* MPLS-TE settings */
 	struct mpls_te_area *mta;
 	/* Segment Routing settings */
-	struct isis_sr_db *srdb;
+	struct isis_sr_db srdb;
 	int ipv6_circuits;
 	bool purge_originator;
 	/* Counters */

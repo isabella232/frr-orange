@@ -718,6 +718,77 @@ module frr-isisd {
             "Stable IP address of the advertising router.";
         }
       }
+
+      container segment-routing {
+        presence "Present if Segment Routing is enabled.";
+        description
+          "Enables Segment Routing";
+        container srgb {
+          description
+            "Global blocks to be advertised.";
+          leaf lower-bound {
+              type uint32;
+              default "16000";
+              description
+                "Lower value in the label range.";
+          }
+          leaf upper-bound {
+              type uint32;
+              default "23999";
+              description
+                "Upper value of the label range.";
+          }
+        }
+        container msd {
+          description
+            "MSD configuration.";
+          leaf node-msd {
+            type uint8;
+            description
+              "Node MSD is the lowest MSD supported by the node.";
+          }
+        }
+        container prefix-sid-map {
+          description
+            "Prefix SID configuration.";
+          list prefix-sid {
+            key "prefix";
+            unique "sid-index";
+            description
+              "List of prefix SID mapped to IPv4/IPv6
+               local prefixes.";
+            leaf prefix {
+              type inet:ip-prefix;
+              description
+                "Connected prefix sid.";
+            }
+            leaf sid-index {
+              type uint32;
+              mandatory true;
+              description
+                "SID index associated with prefix.";
+            }
+            leaf last-hop-behavior {
+              type enumeration {
+                enum "no-php" {
+                  value 0;
+                  description
+                    "Do not use Penultimate Hop Popping (PHP)
+                     for the SID.";
+                }
+                enum "php" {
+                  value 1;
+                  description
+                    "Use PHP for the SID.";
+                }
+              }
+              default "php";
+              description
+                "Configure last hop behavior.";
+            }
+          }
+        }
+      }
     }
   }
 

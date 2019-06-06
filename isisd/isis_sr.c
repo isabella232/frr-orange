@@ -43,51 +43,49 @@
 #include "monotime.h"
 #include "network.h"
 #include "prefix.h"
-#include "sockunion.h" /* for inet_aton() */
+#include "sockunion.h"
 #include "stream.h"
 #include "table.h"
 #include "thread.h"
 #include "vty.h"
 #include "zclient.h"
 #include <lib/json.h>
-#include "isis_errors.h"
+#include "lib/lib_errors.h"
 
 #include "isisd/isisd.h"
 #include "isisd/isis_spf.h"
 #include "isisd/isis_route.h"
-#include "isisd/isis_tlvs.h"
 #include "isisd/isis_sr.h"
+#include "isisd/isis_tlvs.h"
+#include "isisd/isis_misc.h"
 #include "isisd/isis_zebra.h"
+#include "isisd/isis_errors.h"
 
-/*
- * Global variable to manage Segment Routing on this node.
- * Note that all parameter values are stored in network byte order.
- */
-static void isis_sr_register_vty(void);
+#if 0
 static inline void del_sid_nhlfe(struct sr_nhlfe nhlfe);
-static int srdb_lsp_event(struct isis_lsp *lsp, lsp_event_t event);
+#endif
 
 /*
  * Segment Routing Data Base functions
  */
 
 /* Hash function for Segment Routing entry */
-static unsigned int sr_hash(void *p)
+static unsigned int sr_node_hash(const void *p)
 {
-	const struct in_addr *rid = p;
+	const struct sr_node *srn = p;
 
-	return jhash_1word(rid->s_addr, 0);
+	return jhash(srn->sysid, ISIS_SYS_ID_LEN, 0x55aa5a5a);
 }
 
 /* Compare 2 Router ID hash entries based on SR Node */
-static bool sr_cmp(const void *p1, const void *p2)
+static bool sr_node_cmp(const void *p1, const void *p2)
 {
-	const struct sr_node *srn = p1;
-	const struct in_addr *rid = p2;
+	const struct sr_node *srn1 = p1, *srn2 = p2;
 
-	return IPV4_ADDR_SAME(&srn->adv_router, rid);
+	return (memcmp(srn1->sysid, srn2->sysid, ISIS_SYS_ID_LEN) == 0);
 }
 
+#if 0
 /* Functions to remove an SR Link */
 static void del_sr_link(void *val)
 {
@@ -106,14 +104,12 @@ static void del_sr_pref(void *val)
 	del_sid_nhlfe(srp->nhlfe);
 	XFREE(MTYPE_ISIS_SR, val);
 }
+#endif
 
 /* Allocate new Segment Routine Node */
-static struct sr_node *sr_node_new(struct in_addr *rid)
+static void *sr_node_new(void *arg)
 {
-
-	if (rid == NULL)
-		return NULL;
-
+	struct sr_node *srn = arg;
 	struct sr_node *new;
 
 	/* Allocate Segment Routing node memory */
@@ -123,23 +119,25 @@ static struct sr_node *sr_node_new(struct in_addr *rid)
 	for (int i = 0; i < SR_ALGORITHM_COUNT; i++)
 		new->algo[i] = SR_ALGORITHM_UNSET;
 
-	new->srgb.range_size = 0;
 	new->srgb.lower_bound = 0;
+	new->srgb.range_size = 0;
 	new->msd = 0;
 
+#if 0
 	/* Create Link, Prefix and Range TLVs list */
 	new->ext_link = list_new();
 	new->ext_prefix = list_new();
 	new->ext_link->del = del_sr_link;
 	new->ext_prefix->del = del_sr_pref;
+#endif
 
-	IPV4_ADDR_COPY(&new->adv_router, rid);
+	memcpy(new->sysid, srn->sysid, ISIS_SYS_ID_LEN);
 	new->neighbor = NULL;
-	new->instance = 0;
 
 	if (IS_DEBUG_ISIS(DEBUG_SR))
 		zlog_debug("  |-  Created new SR node for %s",
-			   inet_ntoa(new->adv_router));
+			   sysid_print(new->sysid));
+
 	return new;
 }
 
@@ -150,17 +148,20 @@ static void sr_node_del(struct sr_node *srn)
 	if (srn == NULL)
 		return;
 
+#if 0
 	/* Clean Extended Link */
 	list_delete(&srn->ext_link);
 
 	/* Clean Prefix List */
 	list_delete(&srn->ext_prefix);
+#endif
 
 	XFREE(MTYPE_ISIS_SR, srn);
 }
 
+#if 0
 /* Get SR Node for a given nexthop */
-static struct sr_node *get_sr_node_by_nexthop(struct isis_area *area,
+static struct sr_node *get_sr_node_by_nexthop(struct isis *isis,
 					      struct in_addr nexthop)
 {
 	struct isis_interface *oi = NULL;
@@ -171,7 +172,7 @@ static struct sr_node *get_sr_node_by_nexthop(struct isis_area *area,
 	bool found;
 
 	/* Sanity check */
-	if (area->srdb == NULL || area->srdb->neighbors == NULL)
+	if (OspfSR.neighbors == NULL)
 		return NULL;
 
 	if (IS_DEBUG_ISIS(DEBUG_SR))
@@ -199,112 +200,113 @@ static struct sr_node *get_sr_node_by_nexthop(struct isis_area *area,
 		zlog_debug("      |-  Found nexthop Router ID %s",
 			   inet_ntoa(nbr->router_id));
 	/* Then, search SR Node */
-	srn = (struct sr_node *)hash_lookup(area->srdb->neighbors, &nbr->router_id);
+	srn = (struct sr_node *)hash_lookup(OspfSR.neighbors, &nbr->router_id);
 
 	return srn;
 }
-
-/*
- * Segment Routing Initialization functions
- */
+#endif
 
 /* Segment Routing starter function */
-static int isis_sr_start(struct isis_area *area)
+void isis_sr_start(struct isis_area *area)
 {
 	struct sr_node *srn;
-	int rc = 0;
+	struct isis_circuit *circuit;
+	struct listnode *node;
 
 	if (IS_DEBUG_ISIS(DEBUG_SR))
-		zlog_debug("SR (%s): Start Segment Routing", __func__);
-
-	if (area == NULL)
-		return rc;
+		zlog_debug("SR (%s): Starting Segment Routing", __func__);
 
 	/* Initialize self SR Node */
-	if (area->srdb == NULL)
-		area->srdb = XCALLOC(MTYPE_ISIS_SR, sizeof(struct isis_sr_db));
-
-	srn = hash_get(area->srdb->neighbors, (void *)&(area->isis->router_id),
-		       (void *)sr_node_new);
+	srn = hash_get(area->srdb.neighbors, (void *)&(area->isis->sysid),
+		       sr_node_new);
 
 	/* Complete & Store self SR Node */
-	srn->srgb.range_size = area->srdb->srgb.range_size;
-	srn->srgb.lower_bound = area->srdb->srgb.lower_bound;
-	srn->algo[0] = area->srdb->algo[0];
-	srn->msd = area->srdb->msd;
-	area->srdb->self = srn;
+	srn->srgb.lower_bound = area->srdb.lower_bound;
+	srn->srgb.range_size = area->srdb.upper_bound
+			       - area->srdb.lower_bound + 1;
+	for (int i = 0; i < SR_ALGORITHM_COUNT; i++)
+		srn->algo[i] = area->srdb.algo[i];
+	srn->msd = area->srdb.msd;
+	area->srdb.self = srn;
 
 	if (IS_DEBUG_ISIS(DEBUG_EVENTS))
 		zlog_debug("SR (%s): Update SR-DB from LSDB", __func__);
 
-	/* Start by looking to Router Info & Extended LSA in lsdb */
-	lsp_regenerate_schedule(area, area->is_type, 0);
+	for (ALL_LIST_ELEMENTS_RO(area->circuit_list, node, circuit))
+		isis_sr_circuit_set_sid_adjs(circuit);
 
-	rc = 1;
-	return rc;
+	lsp_regenerate_schedule(area, area->is_type, 0);
 }
 
 /* Stop Segment Routing */
-static void isis_sr_stop(struct isis_area *area)
+void isis_sr_stop(struct isis_area *area)
 {
+	struct isis_circuit *circuit;
+	struct listnode *node;
 
 	if (IS_DEBUG_ISIS(DEBUG_SR))
-		zlog_debug("SR (%s): Stop Segment Routing", __func__);
+		zlog_debug("SR (%s): Stopping Segment Routing", __func__);
+
+	/* Stop SR */
+	area->srdb.enabled = false;
+
+	for (ALL_LIST_ELEMENTS_RO(area->circuit_list, node, circuit))
+		isis_sr_circuit_unset_sid_adjs(circuit);
+
+	lsp_regenerate_schedule(area, area->is_type, 0);
 
 	/*
 	 * Remove all SR Nodes from the Hash table. Prefix and Link SID will
 	 * be remove though list_delete() call. See sr_node_del()
 	 */
-	hash_clean(area->srdb->neighbors, (void *)sr_node_del);
+	hash_clean(area->srdb.neighbors, (void (*)(void *))sr_node_del);
 }
 
 /*
  * Segment Routing initialize function
  *
  * @param - nothing
- *
- * @return 0 if OK, -1 otherwise
+ * @return - nothing
  */
-int isis_sr_init(struct isis_area *area)
+void isis_sr_init(struct isis_area *area)
 {
-	int rc = -1;
+	struct isis_sr_db *srdb = &area->srdb;
 
-	if (IS_DEBUG_ISIS(DEBUG_SR))
-		zlog_info("SR (%s): Initialize SR Data Base", __func__);
-
-	memset(&area->srdb, 0, sizeof(struct isis_sr_db));
-	area->srdb->enabled = false;
-	/* Only AREA flooding is supported in this release */
-	area->srdb->scope = area->is_type;
+	memset(srdb, 0, sizeof(*srdb));
+	srdb->enabled = false;
 
 	/* Initialize SRGB, Algorithms and MSD TLVs */
 	/* Only Algorithm SPF is supported */
-	area->srdb->algo[0] = SR_ALGORITHM_SPF;
+	srdb->algo[0] = SR_ALGORITHM_SPF;
 	for (int i = 1; i < SR_ALGORITHM_COUNT; i++)
-		area->srdb->algo[i] = SR_ALGORITHM_UNSET;
-
-	area->srdb->srgb.range_size = MPLS_DEFAULT_MAX_SRGB_SIZE;
-	area->srdb->srgb.lower_bound = MPLS_DEFAULT_MIN_SRGB_LABEL;
-	area->srdb->msd = 0;
+		srdb->algo[i] = SR_ALGORITHM_UNSET;
 
 	/* Initialize Hash table for neighbor SR nodes */
-	area->srdb->neighbors = hash_create(sr_hash, sr_cmp, "ISIS_SR");
-	if (area->srdb->neighbors == NULL)
-		return rc;
+	srdb->neighbors =
+		hash_create(sr_node_hash, sr_node_cmp, "ISIS SR Neighbors");
 
-	/* Initialize Route Table for prefix */
-	area->srdb->prefix = route_table_init();
-	if (area->srdb->prefix == NULL)
-		return rc;
+	/* Initialize Route Table for Prefix-SID mappings */
+	srdb->prefix4_sids = route_table_init();
+	srdb->prefix6_sids = route_table_init();
 
-	/* Register Segment Routing VTY command */
-	isis_sr_register_vty();
+	/* Default values */
+	srdb->msd = 0;
+#ifndef FABRICD
+	srdb->lower_bound = yang_get_default_uint32(
+		"/frr-isisd:isis/instance/segment-routing/srgb/lower-bound");
+	srdb->upper_bound = yang_get_default_uint32(
+		"/frr-isisd:isis/instance/segment-routing/srgb/upper-bound");
+#else
+	/* TODO */
+	//srdb->srgb.range_size = MPLS_DEFAULT_MAX_SRGB_SIZE;
+	//srdb->srgb.lower_bound = MPLS_DEFAULT_MIN_SRGB_LABEL;
+#endif /* ifndef FABRICD */
 
-	/* Register LSP event hook */
+	/* Register Various event hook */
 	hook_register_prio(isis_lsp_event_hook, 100, srdb_lsp_event);
-
-	rc = 0;
-	return rc;
+	hook_register(isis_if_new_hook, isis_sr_if_new_hook);
+	hook_register(isis_circuit_type_update_hook,
+		      isis_sr_circuit_type_update_hook);
 }
 
 /*
@@ -315,36 +317,283 @@ int isis_sr_init(struct isis_area *area)
  */
 void isis_sr_term(struct isis_area *area)
 {
+	struct isis_sr_db *srdb = &area->srdb;
+
+	/* Unregister various event hook */
+	hook_unregister(isis_lsp_event_hook, srdb_lsp_event);
+	hook_unregister(isis_if_new_hook, isis_sr_if_new_hook);
+	hook_unregister(isis_circuit_type_update_hook,
+		      isis_sr_circuit_type_update_hook);
 
 	/* Stop Segment Routing */
 	isis_sr_stop(area);
 
 	/* Clear SR Node Table */
-	if (area->srdb->neighbors)
-		hash_free(area->srdb->neighbors);
+	hash_free(srdb->neighbors);
 
 	/* Clear Prefix Table */
-	if (area->srdb->prefix)
-		route_table_finish(area->srdb->prefix);
+	route_table_finish(srdb->prefix4_sids);
+	route_table_finish(srdb->prefix6_sids);
 
-	area->srdb->enabled = false;
-	area->srdb->self = NULL;
+	srdb->enabled = false;
+	srdb->self = NULL;
 }
 
-/*
- * Segment Routing finish function
- *
- * @param - nothing
- * @return - nothing
- */
-void isis_sr_finish(struct isis_area *area)
+void isis_sr_srgb_update(struct isis_area *area)
 {
-	/* Stop Segment Routing */
-	isis_sr_stop(area);
+	/* Set SID/Label range SRGB */
+	if (area->srdb.self != NULL) {
+		area->srdb.self->srgb.lower_bound = area->srdb.lower_bound;
+		area->srdb.self->srgb.range_size =
+			area->srdb.upper_bound - area->srdb.lower_bound +1;
+	}
 
-	area->srdb->enabled = false;
+#if 0
+	/* Update NHLFE entries */
+	hash_iterate(area->srdb.neighbors,
+		     (void (*)(struct hash_backet *, void *))update_in_nhlfe,
+		     NULL);
+#endif
+
+	lsp_regenerate_schedule(area, area->is_type, 0);
 }
 
+void isis_sr_msd_update(struct isis_area *area)
+{
+	/* Set this router MSD */
+	if (area->srdb.self != NULL)
+		area->srdb.self->msd = area->srdb.msd;
+
+	lsp_regenerate_schedule(area, area->is_type, 0);
+}
+
+/* Functions to Manage Adjacency & Lan-Adjacency SID */
+static void isis_sr_circuit_set_sid_adjs(struct isis_circuit *circuit)
+{
+	struct isis_adj_sid *adj_sid;
+	struct isis_lan_adj_sid *ladj_sid;
+
+	if (circuit->ext == NULL)
+		circuit->ext =
+			XCALLOC(MTYPE_ISIS_CIRCUIT, sizeof(*circuit->ext));
+
+	switch (circuit->circ_type) {
+	case CIRCUIT_T_BROADCAST:
+		if (IS_SUBTLV(circuit->ext, EXT_LAN_ADJ_SID))
+			break;
+		ladj_sid = &circuit->ext->ladj_sid[0];
+		ladj_sid->flags = 0;
+		ladj_sid->weight = 0;
+		/* TODO: Check if it is not the neighbor System ID and
+		 * not the local System ID that is need
+		 *  memcpy(ladj_sid->neighbor_id, circuit->u.bc.XXXX,
+		 *      sizeof(ladj_sid->neighbor_id));
+		 */
+		memcpy(ladj_sid->neighbor_id, circuit->area->isis->sysid,
+		       sizeof(ladj_sid->neighbor_id));
+		ladj_sid->sid = sr_get_local_label();
+		SET_SUBTLV(circuit->ext, EXT_LAN_ADJ_SID);
+		break;
+	case CIRCUIT_T_P2P:
+		if (IS_SUBTLV(circuit->ext, EXT_ADJ_SID))
+			break;
+		adj_sid = &circuit->ext->adj_sid[0];
+		adj_sid->flags = 0;
+		adj_sid->weight = 0;
+		adj_sid->sid = sr_get_local_label();
+		SET_SUBTLV(circuit->ext, EXT_ADJ_SID);
+		break;
+	default:
+		break;
+	}
+}
+
+static void isis_sr_circuit_unset_sid_adjs(struct isis_circuit *circuit)
+{
+	if (circuit->ext == NULL)
+		return;
+
+	memset(&circuit->ext->adj_sid, 0, sizeof(circuit->ext->adj_sid));
+	UNSET_SUBTLV(circuit->ext, EXT_ADJ_SID);
+	memset(&circuit->ext->ladj_sid, 0, sizeof(circuit->ext->ladj_sid));
+	UNSET_SUBTLV(circuit->ext, EXT_LAN_ADJ_SID);
+}
+
+static struct route_table *
+isis_sr_prefix_sid_find_table(const struct isis_area *area,
+			      const struct prefix *prefix)
+{
+	switch (prefix->family) {
+	case AF_INET:
+		return area->srdb.prefix4_sids;
+	case AF_INET6:
+		return area->srdb.prefix6_sids;
+	default:
+		flog_err(EC_LIB_DEVELOPMENT, "%s: unknown prefix family",
+			 __func__);
+		exit(1);
+	}
+}
+
+struct sr_prefix *isis_sr_prefix_sid_add(struct isis_area *area,
+					 const struct prefix *prefix)
+{
+	struct sr_prefix *srp;
+	struct route_table *table;
+	struct route_node *rn;
+	struct interface *ifp;
+
+	srp = XCALLOC(MTYPE_ISIS_SR, sizeof(*srp));
+	srp->prefix = *prefix;
+	srp->nhlfe.prefix = *prefix;
+	switch (prefix->family) {
+	case AF_INET:
+		srp->nhlfe.nexthop.ipv4 = prefix->u.prefix4;
+		break;
+	case AF_INET6:
+		srp->nhlfe.nexthop.ipv6 = prefix->u.prefix6;
+		break;
+	}
+	srp->area = area;
+
+	/* Set flags. */
+	ifp = if_lookup_prefix(prefix, VRF_DEFAULT);
+	if (ifp && if_is_loopback(ifp))
+		SET_FLAG(srp->flags, ISIS_PREFIX_SID_NODE);
+
+	/* Add prefix-sid mapping to routing table. */
+	table = isis_sr_prefix_sid_find_table(area, prefix);
+	rn = route_node_get(table, prefix);
+	assert(rn->info == NULL);
+	rn->info = srp;
+
+#if 0
+	/* TODO: self might be NULL. Also, do we really need this? */
+	listnode_add(area->srdb.self->ext_prefix, srp);
+#endif
+
+	return srp;
+}
+
+void isis_sr_prefix_sid_del(struct sr_prefix *srp)
+{
+	struct isis_area *area;
+	struct route_table *table;
+	struct route_node *rn;
+
+	area = srp->area;
+	table = isis_sr_prefix_sid_find_table(area, &srp->prefix);
+	rn = route_node_lookup(table, &srp->prefix);
+	rn->info = NULL;
+	route_unlock_node(rn);
+
+#if 0
+	/* Delete NHLFE is NO-PHP is set */
+	if (CHECK_FLAG(srp->flags, EXT_SUBTLV_LINK_ADJ_SID_PFLG))
+		del_sid_nhlfe(srp->nhlfe);
+
+	/* OK, all is clean, remove SRP from SRDB */
+	listnode_delete(area->srdb.self->ext_prefix, srp);
+#endif
+	XFREE(MTYPE_ISIS_SR, srp);
+}
+
+struct sr_prefix *isis_sr_prefix_sid_find(const struct isis_area *area,
+					  const struct prefix *prefix)
+{
+	struct route_table *table;
+	struct route_node *rn;
+
+	if (!area->srdb.enabled)
+		return NULL;
+
+	table = isis_sr_prefix_sid_find_table(area, prefix);
+	rn = route_node_lookup(table, prefix);
+	if (rn && rn->info)
+		return rn->info;
+
+	return NULL;
+}
+
+/* Function call by the different Hook */
+static int srdb_lsp_event(struct isis_lsp *lsp, lsp_event_t event)
+{
+	int rc = 0;
+
+	switch(event) {
+	case LSP_ADD:
+		// rc = srdb_lsp_add(lsp);
+		break;
+	case LSP_DEL:
+		// rc = srdb_lsp_del(lsp);
+		break;
+	case LSP_UPD:
+		// rc = srdb_lsp_update(lsp);
+		break;
+	default:
+		rc = 1;
+		break;
+	}
+
+	return rc;
+}
+
+static int isis_sr_if_new_hook(struct interface *ifp)
+{
+	struct isis_circuit *circuit;
+	struct isis_area *area;
+	struct connected *connected;
+	struct listnode *node;
+
+	circuit = circuit_scan_by_ifp(ifp);
+	if (!circuit)
+		return 0;
+
+	area = circuit->area;
+	if (!area->srdb.enabled)
+		return 0;
+
+	/* Create (LAN-)Adj-SID Sub-TLVs. */
+	isis_sr_circuit_set_sid_adjs(circuit);
+
+	/*
+	 * Update the Node-SID flag of the configured Prefix-SID mappings if
+	 * necessary. This needs to be done here since isisd reads the startup
+	 * configuration before receiving interface information from zebra.
+	 */
+	FOR_ALL_INTERFACES_ADDRESSES(ifp, connected, node) {
+		struct sr_prefix *srp;
+
+		srp = isis_sr_prefix_sid_find(area, connected->address);
+		if (!srp)
+			continue;
+
+		if (if_is_loopback(ifp)
+		    && !CHECK_FLAG(srp->flags, ISIS_PREFIX_SID_NODE)) {
+			SET_FLAG(srp->flags, ISIS_PREFIX_SID_NODE);
+			lsp_regenerate_schedule(area, area->is_type, 0);
+		}
+	}
+
+	return 0;
+}
+
+static int isis_sr_circuit_type_update_hook(struct isis_circuit *circuit)
+{
+	struct isis_area *area;
+
+	area = circuit->area;
+	if (!area->srdb.enabled)
+		return 0;
+
+	/* Update (LAN-)Adj-SID Sub-TLVs. */
+	isis_sr_circuit_unset_sid_adjs(circuit);
+	isis_sr_circuit_set_sid_adjs(circuit);
+
+	return 0;
+}
+
+#if 0
 /*
  * Following functions are used to manipulate the
  * Next Hop Label Forwarding entry (NHLFE)
@@ -363,34 +612,29 @@ static mpls_label_t index2label(uint32_t index, struct sr_srgb srgb)
 }
 
 /* Get neighbor full structure from address */
-static struct isis_nexthop *get_neighbor_by_addr(struct isis_area *area,
-						 struct in_addr addr)
+static struct isis_neighbor *get_neighbor_by_addr(struct isis *top,
+						  struct in_addr addr)
 {
-	struct isis_spftree *tree;
-	struct isis_route_info *rinfo;
-	struct route_node *rn;
-	struct isis_nexthop *nh;
+	struct isis_neighbor *nbr;
+	struct isis_interface *oi;
 	struct listnode *node;
-	uint8_t level;
+	struct route_node *rn;
 
 	/* Sanity Check */
-	if (area == NULL)
+	if (top == NULL)
 		return NULL;
 
-	/* TODO: Take into account when area is Level 1 & 2 */
-	level = area->is_type == IS_LEVEL_1 ? 0 : 1;
-	tree = area->spftree[SPFTREE_IPV4][level];
-	for (rn = route_top(tree->route_table); rn;
-	     rn = srcdest_route_next(rn)) {
-		if (rn->info == NULL)
-			continue;
-		rinfo = rn->info;
-
-		for (ALL_LIST_ELEMENTS_RO(rinfo->nexthops, node, nh))
-			if (IPV4_ADDR_SAME(&nh->ip, &addr)
-			    || IPV4_ADDR_SAME(&nh->router_address, &addr))
-				return nh;
-	}
+	for (ALL_LIST_ELEMENTS_RO(top->oiflist, node, oi))
+		for (rn = route_top(oi->nbrs); rn; rn = route_next(rn)) {
+			nbr = rn->info;
+			if (nbr)
+				if (IPV4_ADDR_SAME(&nbr->address.u.prefix4,
+						   &addr)
+				    || IPV4_ADDR_SAME(&nbr->router_id, &addr)) {
+					route_unlock_node(rn);
+					return nbr;
+				}
+		}
 	return NULL;
 }
 
@@ -437,7 +681,7 @@ static struct isis_path *get_nexthop_by_addr(struct isis *top,
 static int compute_link_nhlfe(struct sr_link *srl)
 {
 	struct isis *top = isis_lookup_by_vrf_id(VRF_DEFAULT);
-	struct isis_nexthop *nh;
+	struct isis_neighbor *nh;
 	int rc = 0;
 
 	if (IS_DEBUG_ISIS(DEBUG_SR))
@@ -457,11 +701,11 @@ static int compute_link_nhlfe(struct sr_link *srl)
 
 	if (IS_DEBUG_ISIS(DEBUG_SR))
 		zlog_debug("    |-  Found nexthop NHLFE %s",
-			   inet_ntoa(nh->router_address));
+			   inet_ntoa(nh->router_id));
 
 	/* Set ifindex for this neighbor */
-	srl->nhlfe[0].ifindex = nh->ifindex;
-	srl->nhlfe[1].ifindex = nh->ifindex;
+	srl->nhlfe[0].ifindex = nh->oi->ifp->ifindex;
+	srl->nhlfe[1].ifindex = nh->oi->ifp->ifindex;
 
 	/* Update neighbor address for LAN_ADJ_SID */
 	if (srl->type == LAN_ADJ_SID) {
@@ -537,7 +781,7 @@ static int compute_prefix_nhlfe(struct sr_prefix *srp)
 		return rc;
 
 	/* And store this information for later update if SR Node is found */
-	srnext->neighbor = area->srdb->self;
+	srnext->neighbor = OspfSR.self;
 	if (IPV4_ADDR_SAME(&srnext->adv_router, &srp->adv_router))
 		srp->nexthop = NULL;
 	else
@@ -560,7 +804,7 @@ static int compute_prefix_nhlfe(struct sr_prefix *srp)
 	srp->nhlfe.ifindex = nh->ifindex;
 
 	/* Compute Input Label with self SRGB */
-	srp->nhlfe.label_in = index2label(srp->sid, area->srdb->srgb);
+	srp->nhlfe.label_in = index2label(srp->sid, OspfSR.srgb);
 	/*
 	 * and Output Label with Next hop SR Node SRGB or Implicit Null label
 	 * if next hop is the destination and request PHP
@@ -687,148 +931,6 @@ static inline void update_sid_nhlfe(struct sr_nhlfe n1, struct sr_nhlfe n2)
 }
 
 /*
- * Functions to parse and get Extended Link / Prefix
- * TLVs and SubTLVs
- */
-
-/* Extended Link SubTLVs Getter */
-static struct sr_link *get_ext_link_sid(struct tlv_header *tlvh)
-{
-
-	struct sr_link *srl;
-	struct ext_tlv_link *link = (struct ext_tlv_link *)tlvh;
-	struct ext_subtlv_adj_sid *adj_sid;
-	struct ext_subtlv_lan_adj_sid *lan_sid;
-	struct ext_subtlv_rmt_itf_addr *rmt_itf;
-
-	struct tlv_header *sub_tlvh;
-	uint16_t length = 0, sum = 0, i = 0;
-
-	srl = XCALLOC(MTYPE_ISIS_SR, sizeof(struct sr_link));
-
-	/* Initialize TLV browsing */
-	length = ntohs(tlvh->length) - EXT_TLV_LINK_SIZE;
-	sub_tlvh = (struct tlv_header *)((char *)(tlvh) + TLV_HDR_SIZE
-					 + EXT_TLV_LINK_SIZE);
-	for (; sum < length; sub_tlvh = TLV_HDR_NEXT(sub_tlvh)) {
-		switch (ntohs(sub_tlvh->type)) {
-		case EXT_SUBTLV_ADJ_SID:
-			adj_sid = (struct ext_subtlv_adj_sid *)sub_tlvh;
-			srl->type = ADJ_SID;
-			i = CHECK_FLAG(adj_sid->flags,
-				       EXT_SUBTLV_LINK_ADJ_SID_BFLG)
-				    ? 1
-				    : 0;
-			srl->flags[i] = adj_sid->flags;
-			if (CHECK_FLAG(adj_sid->flags,
-				       EXT_SUBTLV_LINK_ADJ_SID_VFLG))
-				srl->sid[i] = GET_LABEL(ntohl(adj_sid->value));
-			else
-				srl->sid[i] = ntohl(adj_sid->value);
-			IPV4_ADDR_COPY(&srl->nhlfe[i].nexthop, &link->link_id);
-			break;
-		case EXT_SUBTLV_LAN_ADJ_SID:
-			lan_sid = (struct ext_subtlv_lan_adj_sid *)sub_tlvh;
-			srl->type = LAN_ADJ_SID;
-			i = CHECK_FLAG(lan_sid->flags,
-				       EXT_SUBTLV_LINK_ADJ_SID_BFLG)
-				    ? 1
-				    : 0;
-			srl->flags[i] = lan_sid->flags;
-			if (CHECK_FLAG(lan_sid->flags,
-				       EXT_SUBTLV_LINK_ADJ_SID_VFLG))
-				srl->sid[i] = GET_LABEL(ntohl(lan_sid->value));
-			else
-				srl->sid[i] = ntohl(lan_sid->value);
-			IPV4_ADDR_COPY(&srl->nhlfe[i].nexthop,
-				       &lan_sid->neighbor_id);
-			break;
-		case EXT_SUBTLV_RMT_ITF_ADDR:
-			rmt_itf = (struct ext_subtlv_rmt_itf_addr *)sub_tlvh;
-			IPV4_ADDR_COPY(&srl->nhlfe[0].nexthop, &rmt_itf->value);
-			IPV4_ADDR_COPY(&srl->nhlfe[1].nexthop, &rmt_itf->value);
-			break;
-		default:
-			break;
-		}
-		sum += TLV_SIZE(sub_tlvh);
-	}
-
-	IPV4_ADDR_COPY(&srl->nhlfe[0].prefv4.prefix, &link->link_data);
-	srl->nhlfe[0].prefv4.prefixlen = IPV4_MAX_PREFIXLEN;
-	srl->nhlfe[0].prefv4.family = AF_INET;
-	apply_mask_ipv4(&srl->nhlfe[0].prefv4);
-	IPV4_ADDR_COPY(&srl->nhlfe[1].prefv4.prefix, &link->link_data);
-	srl->nhlfe[1].prefv4.prefixlen = IPV4_MAX_PREFIXLEN;
-	srl->nhlfe[1].prefv4.family = AF_INET;
-	apply_mask_ipv4(&srl->nhlfe[1].prefv4);
-
-	if (IS_DEBUG_ISIS(DEBUG_SR)) {
-		zlog_debug("  |-  Found primary Adj/Lan Sid %u for %s/%u",
-			   srl->sid[0], inet_ntoa(srl->nhlfe[0].prefv4.prefix),
-			   srl->nhlfe[0].prefv4.prefixlen);
-		zlog_debug("  |-  Found backup Adj/Lan Sid %u for %s/%u",
-			   srl->sid[1], inet_ntoa(srl->nhlfe[1].prefv4.prefix),
-			   srl->nhlfe[1].prefv4.prefixlen);
-	}
-
-	return srl;
-}
-
-/* Extended Prefix SubTLVs Getter */
-static struct sr_prefix *get_ext_prefix_sid(struct tlv_header *tlvh)
-{
-
-	struct sr_prefix *srp;
-	struct ext_tlv_prefix *pref = (struct ext_tlv_prefix *)tlvh;
-	struct ext_subtlv_prefix_sid *psid;
-
-	struct tlv_header *sub_tlvh;
-	uint16_t length = 0, sum = 0;
-
-	srp = XCALLOC(MTYPE_ISIS_SR, sizeof(struct sr_prefix));
-
-	/* Initialize TLV browsing */
-	length = ntohs(tlvh->length) - EXT_TLV_PREFIX_SIZE;
-	sub_tlvh = (struct tlv_header *)((char *)(tlvh) + TLV_HDR_SIZE
-					 + EXT_TLV_PREFIX_SIZE);
-	for (; sum < length; sub_tlvh = TLV_HDR_NEXT(sub_tlvh)) {
-		switch (ntohs(sub_tlvh->type)) {
-		case EXT_SUBTLV_PREFIX_SID:
-			psid = (struct ext_subtlv_prefix_sid *)sub_tlvh;
-			if (psid->algorithm != SR_ALGORITHM_SPF) {
-				flog_err(EC_ISIS_INVALID_ALGORITHM,
-					 "SR (%s): Unsupported Algorithm",
-					 __func__);
-				XFREE(MTYPE_ISIS_SR, srp);
-				return NULL;
-			}
-			srp->type = PREF_SID;
-			srp->flags = psid->flags;
-			if (CHECK_FLAG(psid->flags, EXT_SUBTLV_PREFIX_SID_VFLG))
-				srp->sid = GET_LABEL(ntohl(psid->value));
-			else
-				srp->sid = ntohl(psid->value);
-			IPV4_ADDR_COPY(&srp->nhlfe.prefv4.prefix,
-				       &pref->address);
-			srp->nhlfe.prefv4.prefixlen = pref->pref_length;
-			srp->nhlfe.prefv4.family = AF_INET;
-			apply_mask_ipv4(&srp->nhlfe.prefv4);
-			break;
-		default:
-			break;
-		}
-		sum += TLV_SIZE(sub_tlvh);
-	}
-
-	if (IS_DEBUG_ISIS(DEBUG_SR))
-		zlog_debug("  |-  Found SID %u for prefix %s/%u", srp->sid,
-			   inet_ntoa(srp->nhlfe.prefv4.prefix),
-			   srp->nhlfe.prefv4.prefixlen);
-	return srp;
-}
-
-/*
  * Functions to manipulate Segment Routing Link & Prefix structures
  */
 
@@ -852,7 +954,6 @@ static inline int sr_prefix_cmp(struct sr_prefix *srp1, struct sr_prefix *srp2)
 		return 1;
 }
 
-
 /* Create new SR Circuit context */
 struct sr_extended *sr_circuit_new(void)
 {
@@ -864,41 +965,6 @@ struct sr_extended *sr_circuit_new(void)
 	sre = XCALLOC(MTYPE_ISIS_SR, sizeof(struct sr_extended));
 
 	return sre;
-}
-/* Copy SUB TLVs parameters into a buffer - No space verification are performed
- */
-/* Caller must verify before that there is enough free space in the buffer */
-uint8_t add_sr_subtlvs(uint8_t *buf, struct sr_circuit *srp)
-{
-	uint8_t size;
-	uint8_t length = 0;
-	uint8_t *tlvs = buf;
-
-	zlog_debug("SR (%): Add SR Sub TLVs to buffer", __func__);
-
-	if (srp == NULL) {
-		zlog_debug(
-			"SR (%s): Abort! No SR Circuit available has been specified",
-			__func__);
-		return 0;
-	}
-
-	/* Create buffer if not provided */
-	if (buf == NULL) {
-		zlog_debug("SR (%): Abort! No Buffer has been specified",
-			   __func__);
-		return 0;
-	}
-
-	/* Adjacency SID primary */
-	if (SUBTLV_TYPE(mtc->admin_grp) != 0) {
-		size = SUBTLV_SIZE(&(mtc->admin_grp.header));
-		memcpy(tlvs, &(srp->adj), size);
-		tlvs += size;
-		length += size;
-	}
-
-	return length;
 }
 
 /* Update Segment Link of given Segment Routing Node */
@@ -1055,7 +1121,7 @@ static void update_in_nhlfe(struct hash_backet *backet, void *args)
 	/* Process Every Extended Prefix for this SR-Node */
 	for (ALL_LIST_ELEMENTS_RO(srn->ext_prefix, node, srp)) {
 		/* Process Self SRN only if NO-PHP is requested */
-		if ((srn == area->srdb->self)
+		if ((srn == OspfSR.self)
 		    && !CHECK_FLAG(srp->flags, SUBTLV_PREFIX_SID_NPFLG))
 			continue;
 
@@ -1065,7 +1131,7 @@ static void update_in_nhlfe(struct hash_backet *backet, void *args)
 
 		/* OK. Compute new NHLFE */
 		memcpy(&new, &srp->nhlfe, sizeof(struct sr_nhlfe));
-		new.label_in = index2label(srp->sid, area->srdb->srgb);
+		new.label_in = index2label(srp->sid, OspfSR.srgb);
 		/* Update MPLS LFIB */
 		update_sid_nhlfe(srp->nhlfe, new);
 		/* Finally update Input Label */
@@ -1098,17 +1164,14 @@ static void update_out_nhlfe(struct hash_backet *backet, void *args)
 }
 
 /*
- * Following functions are call by hook isis_lsp_event_hook() when an LSP
- * is received. 3 Event are managed
- *  - ADD: a new LSP is received and insert in the lspdb
- *  - DEL: a LSP is removed from the lspdb
- *  - UPD: a LSP is updated
- *  All Segment Routing (Router Information, Adj & Lan-Adj SID and Prefix SID
- *  are handle at one time as all information is embed in the same LSP
+ * Following functions are call when new Segment Routing LSA are received
+ *  - Router Information: isis_sr_ri_lsa_update() & isis_sr_ri_lsa_delete()
+ *  - Extended Link: isis_sr_ext_link_update() & isis_sr_ext_link_delete()
+ *  - Extended Prefix: isis_ext_prefix_update() & isis_sr_ext_prefix_delete()
  */
 
-/* Update Segment Routing from LSP */
-static void srdb_lsp_update(struct isis_lsp *lsp)
+/* Update Segment Routing from Router Information LSA */
+void isis_sr_ri_lsa_update(struct isis_lsa *lsa)
 {
 	struct sr_node *srn;
 	struct tlv_header *tlvh;
@@ -1129,14 +1192,14 @@ static void srdb_lsp_update(struct isis_lsp *lsp)
 	if (IS_LSA_SELF(lsa))
 		return;
 
-	if (area->srdb->neighbors == NULL) {
+	if (OspfSR.neighbors == NULL) {
 		flog_err(EC_ISIS_SR_INVALID_DB,
 			 "SR (%s): Abort! no valid SR DataBase", __func__);
 		return;
 	}
 
 	/* Get SR Node in hash table from Router ID */
-	srn = hash_get(area->srdb->neighbors, (void *)&(lsah->adv_router),
+	srn = hash_get(OspfSR.neighbors, (void *)&(lsah->adv_router),
 		       (void *)sr_node_new);
 
 	/* Sanity check */
@@ -1198,7 +1261,7 @@ static void srdb_lsp_update(struct isis_lsp *lsp)
 		flog_err(EC_ISIS_SR_NODE_CREATE,
 			 "SR (%s): Missing mandatory parameters. Abort!",
 			 __func__);
-		hash_release(area->srdb->neighbors, &(srn->adv_router));
+		hash_release(OspfSR.neighbors, &(srn->adv_router));
 		XFREE(MTYPE_ISIS_SR, srn);
 		return;
 	}
@@ -1218,8 +1281,8 @@ static void srdb_lsp_update(struct isis_lsp *lsp)
 		srn->srgb.range_size = srgb.range_size;
 		srn->srgb.lower_bound = srgb.lower_bound;
 		/* Update NHLFE if it is a neighbor SR node */
-		if (srn->neighbor == area->srdb->self)
-			hash_iterate(area->srdb->neighbors,
+		if (srn->neighbor == OspfSR.self)
+			hash_iterate(OspfSR.neighbors,
 				     (void (*)(struct hash_backet *,
 					       void *))update_out_nhlfe,
 				     (void *)srn);
@@ -1241,14 +1304,14 @@ void isis_sr_ri_lsa_delete(struct isis_lsa *lsa)
 			   GET_OPAQUE_ID(ntohl(lsah->id.s_addr)));
 
 	/* Sanity check */
-	if (area->srdb->neighbors == NULL) {
+	if (OspfSR.neighbors == NULL) {
 		flog_err(EC_ISIS_SR_INVALID_DB,
 			 "SR (%s): Abort! no valid SR Data Base", __func__);
 		return;
 	}
 
 	/* Release Router ID entry in SRDB hash table */
-	srn = hash_release(area->srdb->neighbors, &(lsah->adv_router));
+	srn = hash_release(OspfSR.neighbors, &(lsah->adv_router));
 
 	/* Sanity check */
 	if (srn == NULL) {
@@ -1287,14 +1350,14 @@ void isis_sr_ext_link_lsa_update(struct isis_lsa *lsa)
 			inet_ntoa(lsah->adv_router));
 
 	/* Sanity check */
-	if (area->srdb->neighbors == NULL) {
+	if (OspfSR.neighbors == NULL) {
 		flog_err(EC_ISIS_SR_INVALID_DB,
 			 "SR (%s): Abort! no valid SR DataBase", __func__);
 		return;
 	}
 
 	/* Get SR Node in hash table from Router ID */
-	srn = (struct sr_node *)hash_get(area->srdb->neighbors,
+	srn = (struct sr_node *)hash_get(OspfSR.neighbors,
 					 (void *)&(lsah->adv_router),
 					 (void *)sr_node_new);
 
@@ -1339,14 +1402,14 @@ void isis_sr_ext_link_lsa_delete(struct isis_lsa *lsa)
 			   inet_ntoa(lsah->adv_router));
 
 	/* Sanity check */
-	if (area->srdb->neighbors == NULL) {
+	if (OspfSR.neighbors == NULL) {
 		flog_err(EC_ISIS_SR_INVALID_DB,
 			 "SR (%s): Abort! no valid SR DataBase", __func__);
 		return;
 	}
 
 	/* Search SR Node in hash table from Router ID */
-	srn = (struct sr_node *)hash_lookup(area->srdb->neighbors,
+	srn = (struct sr_node *)hash_lookup(OspfSR.neighbors,
 					    (void *)&(lsah->adv_router));
 
 	/*
@@ -1398,14 +1461,14 @@ void isis_sr_ext_prefix_lsa_update(struct isis_lsa *lsa)
 			inet_ntoa(lsah->adv_router));
 
 	/* Sanity check */
-	if (area->srdb->neighbors == NULL) {
+	if (OspfSR.neighbors == NULL) {
 		flog_err(EC_ISIS_SR_INVALID_DB,
 			 "SR (%s): Abort! no valid SR DataBase", __func__);
 		return;
 	}
 
 	/* Get SR Node in hash table from Router ID */
-	srn = (struct sr_node *)hash_get(area->srdb->neighbors,
+	srn = (struct sr_node *)hash_get(OspfSR.neighbors,
 					 (void *)&(lsah->adv_router),
 					 (void *)sr_node_new);
 
@@ -1451,14 +1514,14 @@ void isis_sr_ext_prefix_lsa_delete(struct isis_lsa *lsa)
 			inet_ntoa(lsah->adv_router));
 
 	/* Sanity check */
-	if (area->srdb->neighbors == NULL) {
+	if (OspfSR.neighbors == NULL) {
 		flog_err(EC_ISIS_SR_INVALID_DB,
 			 "SR (%s): Abort! no valid SR DataBase", __func__);
 		return;
 	}
 
 	/* Search SR Node in hash table from Router ID */
-	srn = (struct sr_node *)hash_lookup(area->srdb->neighbors,
+	srn = (struct sr_node *)hash_lookup(OspfSR.neighbors,
 					    (void *)&(lsah->adv_router));
 
 	/*
@@ -1490,32 +1553,11 @@ void isis_sr_ext_prefix_lsa_delete(struct isis_lsa *lsa)
 			inet_ntoa(lsah->adv_router));
 	}
 }
+#endif
 
-static int srdb_lsp_event(struct isis_lsp *lsp, lsp_event_t event)
-{
-	int rc;
-
-	switch(event) {
-	case LSP_ADD:
-		rc = srdb_lsp_add(lsp);
-		break;
-	case LSP_DEL:
-		rc = srdb_lsp_del(lsp);
-		break;
-	case LSP_UPD:
-		rc = srdb_lsp_update(lsp);
-		break;
-	default:
-		rc = 1;
-		break;
-	}
-
-	return rc;
-}
-
-/* Get Label for Extended Link SID */
+/* Get Label for (LAN-)Adj-SID */
 /* TODO: To be replace by Zebra Label Manager */
-uint32_t get_ext_link_label_value(void)
+uint32_t sr_get_local_label(void)
 {
 	static uint32_t label = ADJ_SID_MIN - 1;
 
@@ -1525,6 +1567,7 @@ uint32_t get_ext_link_label_value(void)
 	return label;
 }
 
+#if 0
 /*
  * Update Prefix SID. Call by isis_ext_pref_ism_change to
  * complete initial CLI command at startutp.
@@ -1547,7 +1590,7 @@ void isis_sr_update_prefix(struct interface *ifp, struct prefix *p)
 	 * Search if there is a Segment Prefix that correspond to this
 	 * interface or prefix, and update it if found
 	 */
-	for (ALL_LIST_ELEMENTS_RO(area->srdb->self->ext_prefix, node, srp)) {
+	for (ALL_LIST_ELEMENTS_RO(OspfSR.self->ext_prefix, node, srp)) {
 		if ((srp->nhlfe.ifindex == ifp->ifindex)
 		    || ((IPV4_ADDR_SAME(&srp->nhlfe.prefv4.prefix,
 					&p->u.prefix4))
@@ -1569,7 +1612,7 @@ void isis_sr_update_prefix(struct interface *ifp, struct prefix *p)
 			if (CHECK_FLAG(srp->flags,
 				       SUBTLV_PREFIX_SID_NPFLG)) {
 				srp->nhlfe.label_in = index2label(
-					srp->sid, area->srdb->self->srgb);
+					srp->sid, OspfSR.self->srgb);
 				srp->nhlfe.label_out = MPLS_LABEL_IMPLICIT_NULL;
 				add_sid_nhlfe(srp->nhlfe);
 			}
@@ -1595,7 +1638,7 @@ static void isis_sr_nhlfe_update(struct hash_backet *backet, void *args)
 			   inet_ntoa(srn->adv_router));
 
 	/* Skip Self SR Node */
-	if (srn == area->srdb->self)
+	if (srn == OspfSR.self)
 		return;
 
 	/* Update Extended Prefix */
@@ -1629,13 +1672,13 @@ static void isis_sr_nhlfe_update(struct hash_backet *backet, void *args)
 static int isis_sr_update_schedule(struct thread *t)
 {
 
-	struct isis_area *area;
+	struct isis *isis;
 	struct timeval start_time, stop_time;
 
 	isis = THREAD_ARG(t);
 	isis->t_sr_update = NULL;
 
-	if (!area->srdb->update)
+	if (!OspfSR.update)
 		return 0;
 
 	monotime(&start_time);
@@ -1643,7 +1686,7 @@ static int isis_sr_update_schedule(struct thread *t)
 	if (IS_DEBUG_ISIS(DEBUG_SR))
 		zlog_debug("SR (%s): Start SPF update", __func__);
 
-	hash_iterate(area->srdb->neighbors, (void (*)(struct hash_backet *,
+	hash_iterate(OspfSR.neighbors, (void (*)(struct hash_backet *,
 						 void *))isis_sr_nhlfe_update,
 		     NULL);
 
@@ -1655,785 +1698,25 @@ static int isis_sr_update_schedule(struct thread *t)
 			   (stop_time.tv_sec - start_time.tv_sec) * 1000000LL
 				   + (stop_time.tv_usec - start_time.tv_usec));
 
-	area->srdb->update = false;
+	OspfSR.update = false;
 	return 1;
 }
 
 #define ISIS_SR_UPDATE_INTERVAL	1
 
-void isis_sr_update_timer_add(struct isis_area *area)
+void isis_sr_update_timer_add(struct isis *isis)
 {
 
 	if (isis == NULL)
 		return;
 
 	/* Check if an update is not alreday engage */
-	if (area->srdb->update)
+	if (OspfSR.update)
 		return;
 
-	area->srdb->update = true;
+	OspfSR.update = true;
 
 	thread_add_timer(master, isis_sr_update_schedule, isis,
 			 ISIS_SR_UPDATE_INTERVAL, &isis->t_sr_update);
 }
-
-/*
- * --------------------------------------
- * Followings are vty command functions.
- * --------------------------------------
- */
-
-#ifdef MOVE_TO_NORTHBOUND
-/*
- * Segment Routing Router configuration
- *
- * Must be centralize as it concerns both Extended Link/Prefix LSA
- * and Router Information LSA. Choose to call it from Extended Prefix
- * write_config() call back.
- *
- * @param vty VTY output
- *
- * @return none
- */
-void isis_sr_config_write_router(struct vty *vty)
-{
-	struct listnode *node;
-	struct sr_prefix *srp;
-
-	if (area->srdb->enabled) {
-		vty_out(vty, " segment-routing on\n");
-
-		if ((area->srdb->srgb.lower_bound != MPLS_DEFAULT_MIN_SRGB_LABEL)
-		    || (area->srdb->srgb.range_size != MPLS_DEFAULT_MAX_SRGB_SIZE)) {
-			vty_out(vty, " segment-routing global-block %u %u\n",
-				area->srdb->srgb.lower_bound,
-				area->srdb->srgb.lower_bound + area->srdb->srgb.range_size
-					- 1);
-		}
-		if (area->srdb->msd != 0)
-			vty_out(vty, " segment-routing node-msd %u\n",
-				area->srdb->msd);
-
-		if (area->srdb->self != NULL) {
-			for (ALL_LIST_ELEMENTS_RO(area->srdb->self->ext_prefix, node,
-						  srp)) {
-				vty_out(vty,
-					" segment-routing prefix %s/%u "
-					"index %u%s\n",
-					inet_ntoa(srp->nhlfe.prefv4.prefix),
-					srp->nhlfe.prefv4.prefixlen, srp->sid,
-					CHECK_FLAG(srp->flags,
-						   SUBTLV_PREFIX_SID_NPFLG)
-						? " no-php-flag"
-						: "");
-			}
-		}
-	}
-}
-
-DEFUN(isis_sr_enable,
-       isis_sr_enable_cmd,
-       "segment-routing on",
-       SR_STR
-       "Enable Segment Routing\n")
-{
-
-	VTY_DECLVAR_INSTANCE_CONTEXT(isis, isis);
-
-	if (area->srdb->enabled)
-		return CMD_SUCCESS;
-
-	if (isis->vrf_id != VRF_DEFAULT) {
-		vty_out(vty,
-			"Segment Routing is only supported in default "
-			"VRF\n");
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	if (IS_DEBUG_ISIS_EVENT)
-		zlog_debug("SR: Segment Routing: OFF -> ON");
-
-	/* Start Segment Routing */
-	area->srdb->enabled = true;
-	isis_sr_start(isis);
-
-	/* Set Router Information SR parameters */
-	if (IS_DEBUG_ISIS_EVENT)
-		zlog_debug("SR: Activate SR for Router Information LSA");
-
-	isis_router_info_update_sr(true, area->srdb->srgb, area->srdb->msd);
-
-	/* Update Ext LSA */
-	if (IS_DEBUG_ISIS_EVENT)
-		zlog_debug("SR: Activate SR for Extended Link/Prefix LSA");
-
-	isis_ext_update_sr(true);
-
-	return CMD_SUCCESS;
-}
-
-DEFUN (no_isis_sr_enable,
-       no_isis_sr_enable_cmd,
-       "no segment-routing [on]",
-       NO_STR
-       SR_STR
-       "Disable Segment Routing\n")
-{
-
-	if (!area->srdb->enabled)
-		return CMD_SUCCESS;
-
-	if (IS_DEBUG_ISIS_EVENT)
-		zlog_debug("SR: Segment Routing: ON -> OFF");
-
-	/* Start by Disabling Extended Link & Prefix LSA */
-	isis_ext_update_sr(false);
-
-	/* then, disable Router Information SR parameters */
-	isis_router_info_update_sr(false, area->srdb->srgb, area->srdb->msd);
-
-	/* Finally, stop Segment Routing */
-	isis_sr_stop();
-	area->srdb->enabled = false;
-
-	return CMD_SUCCESS;
-}
-
-static int isis_sr_enabled(struct vty *vty)
-{
-	if (area->srdb->enabled)
-		return 1;
-
-	if (vty)
-		vty_out(vty, "%% ISIS SR is not turned on\n");
-
-	return 0;
-}
-
-DEFUN (sr_sid_label_range,
-       sr_sid_label_range_cmd,
-       "segment-routing global-block (0-1048575) (0-1048575)",
-       SR_STR
-       "Segment Routing Global Block label range\n"
-       "Lower-bound range in decimal (0-1048575)\n"
-       "Upper-bound range in decimal (0-1048575)\n")
-{
-	uint32_t upper;
-	uint32_t lower;
-	uint32_t size;
-	int idx_low = 2;
-	int idx_up = 3;
-
-	if (!isis_sr_enabled(vty))
-		return CMD_WARNING_CONFIG_FAILED;
-
-	/* Get lower and upper bound */
-	lower = strtoul(argv[idx_low]->arg, NULL, 10);
-	upper = strtoul(argv[idx_up]->arg, NULL, 10);
-	size = upper - lower + 1;
-
-	if (size > MPLS_DEFAULT_MAX_SRGB_SIZE || size <= 0) {
-		vty_out(vty,
-			"Range size cannot be less than 0 or more than %u\n",
-			MPLS_DEFAULT_MAX_SRGB_SIZE);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	if (upper > MPLS_DEFAULT_MAX_SRGB_LABEL) {
-		vty_out(vty, "Upper-bound cannot exceed %u\n",
-			MPLS_DEFAULT_MAX_SRGB_LABEL);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	if (upper < MPLS_DEFAULT_MIN_SRGB_LABEL) {
-		vty_out(vty, "Upper-bound cannot be lower than %u\n",
-			MPLS_DEFAULT_MIN_SRGB_LABEL);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	/* Check if values have changed */
-	if ((area->srdb->srgb.range_size == size)
-	    && (area->srdb->srgb.lower_bound == lower))
-		return CMD_SUCCESS;
-
-	/* Set SID/Label range SRGB */
-	area->srdb->srgb.range_size = size;
-	area->srdb->srgb.lower_bound = lower;
-	if (area->srdb->self != NULL) {
-		area->srdb->self->srgb.range_size = size;
-		area->srdb->self->srgb.lower_bound = lower;
-	}
-
-	/* Set Router Information SR parameters */
-	isis_router_info_update_sr(true, area->srdb->srgb, area->srdb->msd);
-
-	/* Update NHLFE entries */
-	hash_iterate(area->srdb->neighbors,
-		     (void (*)(struct hash_backet *, void *))update_in_nhlfe,
-		     NULL);
-
-	return CMD_SUCCESS;
-}
-
-DEFUN (no_sr_sid_label_range,
-	no_sr_sid_label_range_cmd,
-	"no segment-routing global-block [(0-1048575) (0-1048575)]",
-	NO_STR
-	SR_STR
-	"Segment Routing Global Block label range\n"
-	"Lower-bound range in decimal (0-1048575)\n"
-	"Upper-bound range in decimal (0-1048575)\n")
-{
-
-	if (!isis_sr_enabled(vty))
-		return CMD_WARNING_CONFIG_FAILED;
-
-	/* Revert to default SRGB value */
-	area->srdb->srgb.range_size = MPLS_DEFAULT_MIN_SRGB_SIZE;
-	area->srdb->srgb.lower_bound = MPLS_DEFAULT_MIN_SRGB_LABEL;
-	if (area->srdb->self != NULL) {
-		area->srdb->self->srgb.range_size = area->srdb->srgb.range_size;
-		area->srdb->self->srgb.lower_bound = area->srdb->srgb.lower_bound;
-	}
-
-	/* Set Router Information SR parameters */
-	isis_router_info_update_sr(true, area->srdb->srgb, area->srdb->msd);
-
-	/* Update NHLFE entries */
-	hash_iterate(area->srdb->neighbors,
-		     (void (*)(struct hash_backet *, void *))update_in_nhlfe,
-		     NULL);
-
-	return CMD_SUCCESS;
-}
-
-DEFUN (sr_node_msd,
-       sr_node_msd_cmd,
-       "segment-routing node-msd (1-16)",
-       SR_STR
-       "Maximum Stack Depth for this router\n"
-       "Maximum number of label that could be stack (1-16)\n")
-{
-	uint32_t msd;
-	int idx = 1;
-
-	if (!isis_sr_enabled(vty))
-		return CMD_WARNING_CONFIG_FAILED;
-
-	/* Get MSD */
-	argv_find(argv, argc, "(1-16)", &idx);
-	msd = strtoul(argv[idx]->arg, NULL, 10);
-	if (msd < 1 || msd > MPLS_MAX_LABELS) {
-		vty_out(vty, "MSD must be comprise between 1 and %u\n",
-			MPLS_MAX_LABELS);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	/* Check if value has changed */
-	if (area->srdb->msd == msd)
-		return CMD_SUCCESS;
-
-	/* Set this router MSD */
-	area->srdb->msd = msd;
-	if (area->srdb->self != NULL)
-		area->srdb->self->msd = msd;
-
-	/* Set Router Information SR parameters */
-	isis_router_info_update_sr(true, area->srdb->srgb, area->srdb->msd);
-
-	return CMD_SUCCESS;
-}
-
-DEFUN (no_sr_node_msd,
-	no_sr_node_msd_cmd,
-	"no segment-routing node-msd [(1-16)]",
-	NO_STR
-	SR_STR
-	"Maximum Stack Depth for this router\n"
-	"Maximum number of label that could be stack (1-16)\n")
-{
-
-	if (!isis_sr_enabled(vty))
-		return CMD_WARNING_CONFIG_FAILED;
-
-	/* unset this router MSD */
-	area->srdb->msd = 0;
-	if (area->srdb->self != NULL)
-		area->srdb->self->msd = 0;
-
-	/* Set Router Information SR parameters */
-	isis_router_info_update_sr(true, area->srdb->srgb, 0);
-
-	return CMD_SUCCESS;
-}
-
-DEFUN (sr_prefix_sid,
-       sr_prefix_sid_cmd,
-       "segment-routing prefix A.B.C.D/M index (0-65535) [no-php-flag]",
-       SR_STR
-       "Prefix SID\n"
-       "IPv4 Prefix as A.B.C.D/M\n"
-       "SID index for this prefix in decimal (0-65535)\n"
-       "Index value inside SRGB (lower_bound < index < upper_bound)\n"
-       "Don't request Penultimate Hop Popping (PHP)\n")
-{
-	int idx = 0;
-	struct prefix p;
-	uint32_t index;
-	struct listnode *node;
-	struct sr_prefix *srp, *new;
-	struct interface *ifp;
-
-	if (!isis_sr_enabled(vty))
-		return CMD_WARNING_CONFIG_FAILED;
-
-	/* Get network prefix */
-	argv_find(argv, argc, "A.B.C.D/M", &idx);
-	if (!str2prefix(argv[idx]->arg, &p)) {
-		vty_out(vty, "Invalid prefix format %s\n", argv[idx]->arg);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	/* Get & verify index value */
-	argv_find(argv, argc, "(0-65535)", &idx);
-	index = strtoul(argv[idx]->arg, NULL, 10);
-	if (index > area->srdb->srgb.range_size - 1) {
-		vty_out(vty, "Index %u must be lower than range size %u\n",
-			index, area->srdb->srgb.range_size);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	/* check that the index is not already used */
-	for (ALL_LIST_ELEMENTS_RO(area->srdb->self->ext_prefix, node, srp)) {
-		if (srp->sid == index) {
-			vty_out(vty, "Index %u is already used\n", index);
-			return CMD_WARNING_CONFIG_FAILED;
-		}
-	}
-
-	/* Create new Extended Prefix to SRDB if not found */
-	new = XCALLOC(MTYPE_ISIS_SR, sizeof(struct sr_prefix));
-	IPV4_ADDR_COPY(&new->nhlfe.prefv4.prefix, &p.u.prefix4);
-	IPV4_ADDR_COPY(&new->nhlfe.nexthop, &p.u.prefix4);
-	new->nhlfe.prefv4.prefixlen = p.prefixlen;
-	new->nhlfe.prefv4.family = p.family;
-	new->sid = index;
-	/* Set NO PHP flag if present and compute NHLFE */
-	if (argv_find(argv, argc, "no-php-flag", &idx)) {
-		SET_FLAG(new->flags, SUBTLV_PREFIX_SID_NPFLG);
-		new->nhlfe.label_in = index2label(new->sid, area->srdb->self->srgb);
-		new->nhlfe.label_out = MPLS_LABEL_IMPLICIT_NULL;
-	}
-
-	if (IS_DEBUG_ISIS(DEBUG_SR))
-		zlog_debug("SR (%s): Add new index %u to Prefix %s/%u",
-			   __func__, index, inet_ntoa(new->nhlfe.prefv4.prefix),
-			   new->nhlfe.prefv4.prefixlen);
-
-	/* Get Interface and check if it is a Loopback */
-	ifp = if_lookup_prefix(&p, VRF_DEFAULT);
-	if (ifp == NULL) {
-		/*
-		 * Interface could be not yet available i.e. when this
-		 * command is in the configuration file, ISIS is not yet
-		 * ready. In this case, store the prefix SID for latter
-		 * update of this Extended Prefix
-		 */
-		listnode_add(area->srdb->self->ext_prefix, new);
-		zlog_info(
-			"Interface for prefix %s/%u not found. Deferred LSA "
-			"flooding",
-			inet_ntoa(p.u.prefix4), p.prefixlen);
-		return CMD_SUCCESS;
-	}
-
-	if (!if_is_loopback(ifp)) {
-		vty_out(vty, "interface %s is not a Loopback\n", ifp->name);
-		XFREE(MTYPE_ISIS_SR, new);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-	new->nhlfe.ifindex = ifp->ifindex;
-
-	/* Search if this prefix already exist */
-	for (ALL_LIST_ELEMENTS_RO(area->srdb->self->ext_prefix, node, srp)) {
-		if ((IPV4_ADDR_SAME(&srp->nhlfe.prefv4.prefix, &p.u.prefix4)
-		     && srp->nhlfe.prefv4.prefixlen == p.prefixlen))
-			break;
-		else
-			srp = NULL;
-	}
-
-	/* Update or Add this new SR Prefix */
-	if (srp) {
-		update_sid_nhlfe(srp->nhlfe, new->nhlfe);
-		listnode_delete(area->srdb->self->ext_prefix, srp);
-		listnode_add(area->srdb->self->ext_prefix, new);
-	} else {
-		listnode_add(area->srdb->self->ext_prefix, new);
-		add_sid_nhlfe(new->nhlfe);
-	}
-
-	/* Finally, update Extended Prefix LSA */
-	new->instance = isis_ext_schedule_prefix_index(
-		ifp, new->sid, &new->nhlfe.prefv4, new->flags);
-	if (new->instance == 0) {
-		vty_out(vty, "Unable to set index %u for prefix %s/%u\n", index,
-			inet_ntoa(p.u.prefix4), p.prefixlen);
-		return CMD_WARNING;
-	}
-
-	return CMD_SUCCESS;
-}
-
-DEFUN (no_sr_prefix_sid,
-       no_sr_prefix_sid_cmd,
-       "no segment-routing prefix A.B.C.D/M [index (0-65535) no-php-flag]",
-       NO_STR
-       SR_STR
-       "Prefix SID\n"
-       "IPv4 Prefix as A.B.C.D/M\n"
-       "SID index for this prefix in decimal (0-65535)\n"
-       "Index value inside SRGB (lower_bound < index < upper_bound)\n"
-       "Don't request Penultimate Hop Popping (PHP)\n")
-{
-	int idx = 0;
-	struct prefix p;
-	struct listnode *node;
-	struct sr_prefix *srp;
-	struct interface *ifp;
-	bool found = false;
-	int rc;
-
-	if (!isis_sr_enabled(vty))
-		return CMD_WARNING_CONFIG_FAILED;
-
-	/* Get network prefix */
-	argv_find(argv, argc, "A.B.C.D/M", &idx);
-	rc = str2prefix(argv[idx]->arg, &p);
-	if (!rc) {
-		vty_out(vty, "Invalid prefix format %s\n", argv[idx]->arg);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	/* check that the prefix is already set */
-	for (ALL_LIST_ELEMENTS_RO(area->srdb->self->ext_prefix, node, srp))
-		if (IPV4_ADDR_SAME(&srp->nhlfe.prefv4.prefix, &p.u.prefix4)
-		    && (srp->nhlfe.prefv4.prefixlen == p.prefixlen)) {
-			found = true;
-			break;
-		}
-
-	if (!found) {
-		vty_out(vty, "Prefix %s is not found. Abort!\n",
-			argv[idx]->arg);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	/* Get Interface */
-	ifp = if_lookup_by_index(srp->nhlfe.ifindex, VRF_DEFAULT);
-	if (ifp == NULL) {
-		vty_out(vty, "interface for prefix %s not found.\n",
-			argv[idx]->arg);
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-
-	/* Update Extended Prefix LSA */
-	if (!isis_ext_schedule_prefix_index(ifp, 0, NULL, 0)) {
-		vty_out(vty, "No corresponding loopback interface. Abort!\n");
-		return CMD_WARNING;
-	}
-
-	if (IS_DEBUG_ISIS(DEBUG_SR))
-		zlog_debug("SR (%s): Remove Prefix %s/%u with index %u",
-			   __func__, inet_ntoa(srp->nhlfe.prefv4.prefix),
-			   srp->nhlfe.prefv4.prefixlen, srp->sid);
-
-	/* Delete NHLFE is NO-PHP is set */
-	if (CHECK_FLAG(srp->flags, SUBTLV_PREFIX_SID_NPFLG))
-		del_sid_nhlfe(srp->nhlfe);
-
-	/* OK, all is clean, remove SRP from SRDB */
-	listnode_delete(area->srdb->self->ext_prefix, srp);
-	XFREE(MTYPE_ISIS_SR, srp);
-
-	return CMD_SUCCESS;
-}
 #endif
-
-static void show_sr_node(struct vty *vty, struct json_object *json,
-			 struct sr_node *srn)
-{
-
-	struct listnode *node;
-	struct sr_link *srl;
-	struct sr_prefix *srp;
-	struct interface *itf;
-	char pref[19];
-	char sid[22];
-	char label[8];
-	json_object *json_node = NULL, *json_algo, *json_obj;
-	json_object *json_prefix = NULL, *json_link = NULL;
-
-	/* Sanity Check */
-	if (srn == NULL)
-		return;
-
-	if (json) {
-		json_node = json_object_new_object();
-		json_object_string_add(json_node, "routerID",
-				       inet_ntoa(srn->adv_router));
-		json_object_int_add(json_node, "srgbSize",
-				    srn->srgb.range_size);
-		json_object_int_add(json_node, "srgbLabel",
-				    srn->srgb.lower_bound);
-		json_algo = json_object_new_array();
-		json_object_object_add(json_node, "algorithms", json_algo);
-		for (int i = 0; i < ALGORITHM_COUNT; i++) {
-			if (srn->algo[i] == SR_ALGORITHM_UNSET)
-				continue;
-			json_obj = json_object_new_object();
-			char tmp[2];
-
-			snprintf(tmp, 2, "%u", i);
-			json_object_string_add(json_obj, tmp,
-					       srn->algo[i] == SR_ALGORITHM_SPF
-						       ? "SPF"
-						       : "S-SPF");
-			json_object_array_add(json_algo, json_obj);
-		}
-		if (srn->msd != 0)
-			json_object_int_add(json_node, "nodeMsd", srn->msd);
-	} else {
-		vty_out(vty, "SR-Node: %s", inet_ntoa(srn->adv_router));
-		vty_out(vty, "\tSRGB (Size/Label): %u/%u", srn->srgb.range_size,
-			srn->srgb.lower_bound);
-		vty_out(vty, "\tAlgorithm(s): %s",
-			srn->algo[0] == SR_ALGORITHM_SPF ? "SPF" : "S-SPF");
-		for (int i = 1; i < SR_ALGORITHM_COUNT; i++) {
-			if (srn->algo[i] == SR_ALGORITHM_UNSET)
-				continue;
-			vty_out(vty, "/%s",
-				srn->algo[i] == SR_ALGORITHM_SPF ? "SPF"
-								 : "S-SPF");
-		}
-		if (srn->msd != 0)
-			vty_out(vty, "\tMSD: %u", srn->msd);
-	}
-
-	if (!json) {
-		vty_out(vty,
-			"\n\n    Prefix or Link  Label In  Label Out       "
-			"Node or Adj. SID  Interface          Nexthop\n");
-		vty_out(vty,
-			"------------------  --------  ---------  "
-			"---------------------  ---------  ---------------\n");
-	}
-	for (ALL_LIST_ELEMENTS_RO(srn->ext_prefix, node, srp)) {
-		snprintf(pref, 19, "%s/%u", inet_ntoa(srp->nhlfe.prefv4.prefix),
-			 srp->nhlfe.prefv4.prefixlen);
-		snprintf(sid, 22, "SR Pfx (idx %u)", srp->sid);
-		if (srp->nhlfe.label_out == MPLS_LABEL_IMPLICIT_NULL)
-			sprintf(label, "pop");
-		else
-			sprintf(label, "%u", srp->nhlfe.label_out);
-		itf = if_lookup_by_index(srp->nhlfe.ifindex, VRF_DEFAULT);
-		if (json) {
-			if (!json_prefix) {
-				json_prefix = json_object_new_array();
-				json_object_object_add(json_node,
-						       "extendedPrefix",
-						       json_prefix);
-			}
-			json_obj = json_object_new_object();
-			json_object_string_add(json_obj, "prefix", pref);
-			json_object_int_add(json_obj, "sid", srp->sid);
-			json_object_int_add(json_obj, "inputLabel",
-					    srp->nhlfe.label_in);
-			json_object_string_add(json_obj, "outputLabel", label);
-			json_object_string_add(json_obj, "interface",
-					       itf ? itf->name : "-");
-			json_object_string_add(json_obj, "nexthop",
-					       inet_ntoa(srp->nhlfe.nexthop));
-			json_object_array_add(json_prefix, json_obj);
-		} else {
-			vty_out(vty, "%18s  %8u  %9s  %21s  %9s  %15s\n", pref,
-				srp->nhlfe.label_in, label, sid,
-				itf ? itf->name : "-",
-				inet_ntoa(srp->nhlfe.nexthop));
-		}
-	}
-
-	for (ALL_LIST_ELEMENTS_RO(srn->ext_link, node, srl)) {
-		snprintf(pref, 19, "%s/%u",
-			 inet_ntoa(srl->nhlfe[0].prefv4.prefix),
-			 srl->nhlfe[0].prefv4.prefixlen);
-		snprintf(sid, 22, "SR Adj. (lbl %u)", srl->sid[0]);
-		if (srl->nhlfe[0].label_out == MPLS_LABEL_IMPLICIT_NULL)
-			sprintf(label, "pop");
-		else
-			sprintf(label, "%u", srl->nhlfe[0].label_out);
-		itf = if_lookup_by_index(srl->nhlfe[0].ifindex, VRF_DEFAULT);
-		if (json) {
-			if (!json_link) {
-				json_link = json_object_new_array();
-				json_object_object_add(
-					json_node, "extendedLink", json_link);
-			}
-			/* Primary Link */
-			json_obj = json_object_new_object();
-			json_object_string_add(json_obj, "prefix", pref);
-			json_object_int_add(json_obj, "sid", srl->sid[0]);
-			json_object_int_add(json_obj, "inputLabel",
-					    srl->nhlfe[0].label_in);
-			json_object_string_add(json_obj, "outputLabel", label);
-			json_object_string_add(json_obj, "interface",
-					       itf ? itf->name : "-");
-			json_object_string_add(
-				json_obj, "nexthop",
-				inet_ntoa(srl->nhlfe[0].nexthop));
-			json_object_array_add(json_link, json_obj);
-			/* Backup Link */
-			json_obj = json_object_new_object();
-			snprintf(sid, 22, "SR Adj. (lbl %u)", srl->sid[1]);
-			if (srl->nhlfe[1].label_out == MPLS_LABEL_IMPLICIT_NULL)
-				sprintf(label, "pop");
-			else
-				sprintf(label, "%u", srl->nhlfe[0].label_out);
-			json_object_string_add(json_obj, "prefix", pref);
-			json_object_int_add(json_obj, "sid", srl->sid[1]);
-			json_object_int_add(json_obj, "inputLabel",
-					    srl->nhlfe[1].label_in);
-			json_object_string_add(json_obj, "outputLabel", label);
-			json_object_string_add(json_obj, "interface",
-					       itf ? itf->name : "-");
-			json_object_string_add(
-				json_obj, "nexthop",
-				inet_ntoa(srl->nhlfe[1].nexthop));
-			json_object_array_add(json_link, json_obj);
-		} else {
-			vty_out(vty, "%18s  %8u  %9s  %21s  %9s  %15s\n", pref,
-				srl->nhlfe[0].label_in, label, sid,
-				itf ? itf->name : "-",
-				inet_ntoa(srl->nhlfe[0].nexthop));
-			snprintf(sid, 22, "SR Adj. (lbl %u)", srl->sid[1]);
-			if (srl->nhlfe[1].label_out == MPLS_LABEL_IMPLICIT_NULL)
-				sprintf(label, "pop");
-			else
-				sprintf(label, "%u", srl->nhlfe[1].label_out);
-			vty_out(vty, "%18s  %8u  %9s  %21s  %9s  %15s\n", pref,
-				srl->nhlfe[1].label_in, label, sid,
-				itf ? itf->name : "-",
-				inet_ntoa(srl->nhlfe[1].nexthop));
-		}
-	}
-	if (json)
-		json_object_array_add(json, json_node);
-	else
-		vty_out(vty, "\n");
-}
-
-static void show_vty_srdb(struct hash_backet *backet, void *args)
-{
-	struct vty *vty = (struct vty *)args;
-	struct sr_node *srn = (struct sr_node *)backet->data;
-
-	show_sr_node(vty, NULL, srn);
-}
-
-static void show_json_srdb(struct hash_backet *backet, void *args)
-{
-	struct json_object *json = (struct json_object *)args;
-	struct sr_node *srn = (struct sr_node *)backet->data;
-
-	show_sr_node(NULL, json, srn);
-}
-
-DEFUN (show_ip_opsf_srdb,
-       show_ip_isis_srdb_cmd,
-       "show ip isis database segment-routing [adv-router A.B.C.D|self-originate] [json]",
-       SHOW_STR
-       IP_STR
-       ISIS_STR
-       "Database summary\n"
-       "Show Segment Routing Data Base\n"
-       "Advertising SR node\n"
-       "Advertising SR node ID (as an IP address)\n"
-       "Self-originated SR node\n"
-       JSON_STR)
-{
-	int idx = 0;
-	struct in_addr rid;
-	struct sr_node *srn;
-	bool uj = use_json(argc, argv);
-	json_object *json = NULL, *json_node_array = NULL;
-
-	if (!area->srdb->enabled) {
-		vty_out(vty, "Segment Routing is disabled on this router\n");
-		return CMD_WARNING;
-	}
-
-	if (uj) {
-		json = json_object_new_object();
-		json_node_array = json_object_new_array();
-		json_object_string_add(json, "srdbID",
-				       inet_ntoa(area->srdb->self->adv_router));
-		json_object_object_add(json, "srNodes", json_node_array);
-	} else {
-		vty_out(vty,
-			"\n\t\tISIS Segment Routing database for ID %s\n\n",
-			inet_ntoa(area->srdb->self->adv_router));
-	}
-
-	if (argv_find(argv, argc, "self-originate", &idx)) {
-		srn = area->srdb->self;
-		show_sr_node(vty, json_node_array, srn);
-		if (uj) {
-			vty_out(vty, "%s\n",
-				json_object_to_json_string_ext(
-					json, JSON_C_TO_STRING_PRETTY));
-			json_object_free(json);
-		}
-		return CMD_SUCCESS;
-	}
-
-	if (argv_find(argv, argc, "A.B.C.D", &idx)) {
-		if (!inet_aton(argv[idx]->arg, &rid)) {
-			vty_out(vty, "Specified Router ID %s is invalid\n",
-				argv[idx]->arg);
-			return CMD_WARNING_CONFIG_FAILED;
-		}
-		/* Get the SR Node from the SRDB */
-		srn = (struct sr_node *)hash_lookup(area->srdb->neighbors,
-						    (void *)&rid);
-		show_sr_node(vty, json_node_array, srn);
-		if (uj) {
-			vty_out(vty, "%s\n",
-				json_object_to_json_string_ext(
-					json, JSON_C_TO_STRING_PRETTY));
-			json_object_free(json);
-		}
-		return CMD_SUCCESS;
-	}
-
-	/* No parameters have been provided, Iterate through all the SRDB */
-	if (uj) {
-		hash_iterate(area->srdb->neighbors, (void (*)(struct hash_backet *,
-							 void *))show_json_srdb,
-			     (void *)json_node_array);
-		vty_out(vty, "%s\n", json_object_to_json_string_ext(
-					     json, JSON_C_TO_STRING_PRETTY));
-		json_object_free(json);
-	} else {
-		hash_iterate(area->srdb->neighbors, (void (*)(struct hash_backet *,
-							 void *))show_vty_srdb,
-			     (void *)vty);
-	}
-	return CMD_SUCCESS;
-}
-
-/* Install new CLI commands */
-void isis_sr_register_vty(void)
-{
-	install_element(VIEW_NODE, &show_ip_isis_srdb_cmd);
-
-}

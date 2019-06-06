@@ -56,6 +56,7 @@
 #include "isisd/isis_events.h"
 #include "isisd/isis_te.h"
 #include "isisd/isis_mt.h"
+#include "isisd/isis_sr.h"
 #include "isisd/fabricd.h"
 
 struct isis *isis = NULL;
@@ -132,6 +133,8 @@ struct isis_area *isis_area_create(const char *area_tag)
 	thread_add_timer(master, lsp_tick, area, 1, &area->t_tick);
 	flags_initialize(&area->flags);
 
+	isis_sr_init(area);
+
 	/*
 	 * Default values
 	 */
@@ -163,6 +166,7 @@ struct isis_area *isis_area_create(const char *area_tag)
 	area->lsp_frag_threshold = 90; /* not currently configurable */
 	area->lsp_mtu =
 		yang_get_default_uint16("/frr-isisd:isis/instance/lsp/mtu");
+
 #else
 	area->max_lsp_lifetime[0] = DEFAULT_LSP_LIFETIME;    /* 1200 */
 	area->max_lsp_lifetime[1] = DEFAULT_LSP_LIFETIME;    /* 1200 */
@@ -274,6 +278,8 @@ int isis_area_destroy(const char *area_tag)
 	/* invalidate and verify to delete all routes from zebra */
 	isis_area_invalidate_routes(area, area->is_type);
 	isis_area_verify_routes(area);
+
+	isis_sr_term(area);
 
 	spftree_area_del(area);
 

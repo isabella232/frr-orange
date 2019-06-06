@@ -214,6 +214,7 @@ struct isis_router_cap {
 	struct isis_srgb srgb;
 	uint8_t algo[SR_ALGORITHM_COUNT];
 	/* RFC 8491 */
+#define MSD_TYPE_BASE_MPLS_IMPOSITION  0x01
 	uint8_t msd;
 };
 
@@ -424,7 +425,7 @@ enum ext_subtlv_size {
 	ISIS_SUBTLV_SID_LABEL_SIZE = 3,
 	ISIS_SUBTLV_SID_LABEL_RANGE_SIZE = 9,
 	ISIS_SUBTLV_ALGORITHM_SIZE = 4,
-	ISIS_SUBTLV_NODE_MSD_SIZE = 4,
+	ISIS_SUBTLV_NODE_MSD_SIZE = 2,
 	ISIS_SUBTLV_ADJ_SID_SIZE = 5,
 	ISIS_SUBTLV_LAN_ADJ_SID_SIZE = 11,
 	ISIS_SUBTLV_PREFIX_SID_SIZE = 5,
@@ -573,9 +574,10 @@ void isis_tlvs_add_oldstyle_ip_reach(struct isis_tlvs *tlvs,
 				     struct prefix_ipv4 *dest, uint8_t metric);
 void isis_tlvs_add_extended_ip_reach(struct isis_tlvs *tlvs,
 				     struct prefix_ipv4 *dest, uint32_t metric,
-				     struct isis_prefix_sid *psid);
+				     struct sr_prefix *srp);
 void isis_tlvs_add_ipv6_reach(struct isis_tlvs *tlvs, uint16_t mtid,
-			      struct prefix_ipv6 *dest, uint32_t metric);
+			      struct prefix_ipv6 *dest, uint32_t metric,
+			      struct sr_prefix *srp);
 void isis_tlvs_add_ipv6_dstsrc_reach(struct isis_tlvs *tlvs, uint16_t mtid,
 				     struct prefix_ipv6 *dest,
 				     struct prefix_ipv6 *src,

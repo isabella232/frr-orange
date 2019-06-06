@@ -24,6 +24,7 @@
 #include "northbound.h"
 #include "libfrr.h"
 #include "linklist.h"
+#include "table.h"
 #include "log.h"
 #include "lib/bfd.h"
 #include "isisd/isis_bfd.h"
@@ -44,6 +45,7 @@
 #include "isisd/isis_mt.h"
 #include "isisd/isis_cli.h"
 #include "isisd/isis_redist.h"
+#include "isisd/isis_sr.h"
 #include "lib/spf_backoff.h"
 #include "lib/lib_errors.h"
 #include "lib/vrf.h"
@@ -1514,6 +1516,237 @@ static int isis_instance_mpls_te_router_address_destroy(enum nb_event event,
 	/* And re-schedule LSP update */
 	if (listcount(area->area_addrs) > 0)
 		lsp_regenerate_schedule(area, area->is_type, 0);
+
+	return NB_OK;
+}
+
+/*
+ * XPath: /frr-isisd:isis/instance/segment-routing/enabled
+ */
+static int
+isis_instance_segment_routing_create(enum nb_event event,
+				     const struct lyd_node *dnode,
+				     union nb_resource *resource)
+{
+	struct isis_area *area;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+
+	if (!IS_SR(area)) {
+		if (IS_DEBUG_ISIS(DEBUG_EVENTS))
+			zlog_debug("SR: Segment Routing: OFF -> ON");
+		isis_sr_start(area);
+	}
+
+	return NB_OK;
+}
+
+static int
+isis_instance_segment_routing_destroy(enum nb_event event,
+				      const struct lyd_node *dnode,
+				      union nb_resource *resource)
+{
+	struct isis_area *area;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+
+	if IS_SR(area) {
+		if (IS_DEBUG_ISIS(DEBUG_EVENTS))
+			zlog_debug("SR: Segment Routing: ON -> OFF");
+		isis_sr_stop(area);
+	}
+
+	return NB_OK;
+}
+
+/*
+ * XPath: /frr-isisd:isis/instance/segment-routing/srgb
+ */
+static void isis_instance_segment_routing_srgb_lower_bound_apply_finish(
+	const struct lyd_node *dnode)
+{
+	struct isis_area *area;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+
+	isis_sr_srgb_update(area);
+}
+
+/*
+ * XPath: /frr-isisd:isis/instance/segment-routing/srgb/lower-bound
+ */
+static int isis_instance_segment_routing_srgb_lower_bound_modify(
+	enum nb_event event, const struct lyd_node *dnode,
+	union nb_resource *resource)
+{
+	struct isis_area *area;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+	area->srdb.lower_bound = yang_dnode_get_uint32(dnode, NULL);
+
+	return NB_OK;
+}
+
+/*
+ * XPath: /frr-isisd:isis/instance/segment-routing/srgb/upper-bound
+ */
+static int isis_instance_segment_routing_srgb_upper_bound_modify(
+	enum nb_event event, const struct lyd_node *dnode,
+	union nb_resource *resource)
+{
+	struct isis_area *area;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+	area->srdb.upper_bound = yang_dnode_get_uint32(dnode, NULL);
+
+	return NB_OK;
+}
+
+/*
+ * XPath: /frr-isisd:isis/instance/segment-routing/msd/node-msd
+ */
+static int
+isis_instance_segment_routing_msd_node_msd_modify(enum nb_event event,
+						  const struct lyd_node *dnode,
+						  union nb_resource *resource)
+{
+	struct isis_area *area;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+	area->srdb.msd = yang_dnode_get_uint8(dnode, NULL);
+	isis_sr_msd_update(area);
+
+	return NB_OK;
+}
+
+static int
+isis_instance_segment_routing_msd_node_msd_destroy(enum nb_event event,
+						   const struct lyd_node *dnode)
+{
+	struct isis_area *area;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+	area->srdb.msd = 0;
+	isis_sr_msd_update(area);
+
+	return NB_OK;
+}
+
+/*
+ * XPath: /frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid
+ */
+static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_create(
+	enum nb_event event, const struct lyd_node *dnode,
+	union nb_resource *resource)
+{
+	struct isis_area *area;
+	struct prefix prefix;
+	struct sr_prefix *srp;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	area = nb_running_get_entry(dnode, NULL, true);
+	yang_dnode_get_prefix(&prefix, dnode, "./prefix");
+
+	srp = isis_sr_prefix_sid_add(area, &prefix);
+	nb_running_set_entry(dnode, srp);
+
+	return NB_OK;
+}
+
+static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy(
+	enum nb_event event, const struct lyd_node *dnode)
+{
+	struct sr_prefix *srp;
+	struct isis_area *area;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	srp = nb_running_unset_entry(dnode);
+	area = srp->area;
+	isis_sr_prefix_sid_del(srp);
+	lsp_regenerate_schedule(area, area->is_type, 0);
+
+	return NB_OK;
+}
+
+static void
+isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish(
+	const struct lyd_node *dnode)
+{
+	struct sr_prefix *srp;
+	struct isis_area *area;
+
+	srp = nb_running_get_entry(dnode, NULL, true);
+	area = srp->area;
+	lsp_regenerate_schedule(area, area->is_type, 0);
+}
+
+/*
+ * XPath:
+ * /frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-index
+ */
+static int
+isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify(
+	enum nb_event event, const struct lyd_node *dnode,
+	union nb_resource *resource)
+{
+	struct sr_prefix *srp;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	srp = nb_running_get_entry(dnode, NULL, true);
+	srp->sid = yang_dnode_get_uint32(dnode, NULL);
+
+	return NB_OK;
+}
+
+/*
+ * XPath:
+ * /frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/last-hop-behavior
+ */
+static int
+isis_instance_segment_routing_prefix_sid_map_prefix_sid_last_hop_behavior_modify(
+	enum nb_event event, const struct lyd_node *dnode,
+	union nb_resource *resource)
+{
+	struct sr_prefix *srp;
+	int last_hop_behavior;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	srp = nb_running_get_entry(dnode, NULL, true);
+	last_hop_behavior = yang_dnode_get_enum(dnode, NULL);
+	/* TODO: use constants. */
+	switch (last_hop_behavior) {
+	case 0:
+		SET_FLAG(srp->flags, ISIS_PREFIX_SID_NO_PHP);
+		break;
+	case 1:
+		UNSET_FLAG(srp->flags, ISIS_PREFIX_SID_NO_PHP);
+		//srp->nhlfe.label_in = index2label(srp->sid, OspfSR.self->srgb);
+		srp->nhlfe.label_out = MPLS_LABEL_IMPLICIT_NULL;
+		break;
+	}
 
 	return NB_OK;
 }
@@ -3211,6 +3444,46 @@ const struct frr_yang_module_info frr_isisd_info = {
 				.destroy = isis_instance_mpls_te_router_address_destroy,
 				.modify = isis_instance_mpls_te_router_address_modify,
 			},
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/enabled",
+			.cbs.create = isis_instance_segment_routing_create,
+			.cbs.destroy = isis_instance_segment_routing_destroy,
+			.cbs.cli_show = cli_show_isis_sr_enabled,
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/srgb",
+			.cbs.apply_finish = isis_instance_segment_routing_srgb_lower_bound_apply_finish,
+			.cbs.cli_show = cli_show_isis_srgb,
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/srgb/lower-bound",
+			.cbs.modify = isis_instance_segment_routing_srgb_lower_bound_modify,
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/srgb/upper-bound",
+			.cbs.modify = isis_instance_segment_routing_srgb_upper_bound_modify,
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/msd/node-msd",
+			.cbs.modify = isis_instance_segment_routing_msd_node_msd_modify,
+			.cbs.destroy = isis_instance_segment_routing_msd_node_msd_destroy,
+			.cbs.cli_show = cli_show_isis_node_msd,
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid",
+			.cbs.create = isis_instance_segment_routing_prefix_sid_map_prefix_sid_create,
+			.cbs.destroy = isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy,
+			.cbs.apply_finish = isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish,
+			.cbs.cli_show = cli_show_isis_prefix_sid,
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-index",
+			.cbs.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify,
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/last-hop-behavior",
+			.cbs.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_last_hop_behavior_modify,
 		},
 		{
 			.xpath = "/frr-interface:lib/interface/frr-isisd:isis",

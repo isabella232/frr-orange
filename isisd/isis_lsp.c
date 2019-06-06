@@ -773,10 +773,15 @@ static void lsp_build_ext_reach_ipv4(struct isis_lsp *lsp,
 		if (area->oldmetric)
 			isis_tlvs_add_oldstyle_ip_reach(lsp->tlvs, ipv4,
 							metric);
-		if (area->newmetric)
-			/* TODO: Check if Prefix SID is not available instead passing NULL */
+		if (area->newmetric) {
+			struct sr_prefix *srp;
+
+			srp = isis_sr_prefix_sid_find(area,
+						      (struct prefix *)ipv4);
+
 			isis_tlvs_add_extended_ip_reach(lsp->tlvs, ipv4,
-							metric, NULL);
+							metric, srp);
+		}
 	}
 }
 
@@ -803,9 +808,12 @@ static void lsp_build_ext_reach_ipv6(struct isis_lsp *lsp,
 			metric = MAX_WIDE_PATH_METRIC;
 
 		if (!src_p || !src_p->prefixlen) {
+			struct sr_prefix *srp;
+			srp = isis_sr_prefix_sid_find(area, (struct prefix *)p);
+
 			isis_tlvs_add_ipv6_reach(lsp->tlvs,
 						 isis_area_ipv6_topology(area),
-						 p, metric);
+						 p, metric, srp);
 		} else if (isis_area_ipv6_dstsrc_enabled(area)) {
 			isis_tlvs_add_ipv6_dstsrc_reach(lsp->tlvs,
 							ISIS_MT_IPV6_DSTSRC,
@@ -1015,13 +1023,17 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 				}
 
 				if (area->newmetric) {
+					struct sr_prefix *srp;
 					lsp_debug(
 						"ISIS (%s): Adding te-style IP reachability for %s",
 						area->area_tag,
 						prefix2str(ipv4, buf,
 							   sizeof(buf)));
+					srp = isis_sr_prefix_sid_find(
+					                        area, (struct prefix *)ipv4);
 					isis_tlvs_add_extended_ip_reach(
-						lsp->tlvs, ipv4, metric, circuit->pref_sid);
+						lsp->tlvs, ipv4, metric,
+						circuit->pref_sid, srp);
 				}
 			}
 		}
@@ -1030,16 +1042,19 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 		    && circuit->ipv6_non_link->count > 0) {
 			struct listnode *ipnode;
 			struct prefix_ipv6 *ipv6;
+			struct sr_prefix *srp;
 			for (ALL_LIST_ELEMENTS_RO(circuit->ipv6_non_link,
 						  ipnode, ipv6)) {
 				lsp_debug(
 					"ISIS (%s): Adding IPv6 reachability for %s",
 					area->area_tag,
 					prefix2str(ipv6, buf, sizeof(buf)));
+				srp = isis_sr_prefix_sid_find(
+				                    area, (struct prefix *)ipv6);
 				isis_tlvs_add_ipv6_reach(
 					lsp->tlvs,
 					isis_area_ipv6_topology(area), ipv6,
-					metric);
+					metric, srp);
 			}
 		}
 
@@ -1492,7 +1507,7 @@ static void lsp_build_pseudo(struct isis_lsp *lsp, struct isis_circuit *circuit,
 	}
 	if (circuit->area->newmetric) {
 		isis_tlvs_add_extended_reach(lsp->tlvs, ISIS_MT_IPV4_UNICAST,
-					     ne_id, 0, NULL);
+					     ne_id, 0, circuit->ext);
 		lsp_debug(
 			"ISIS (%s): Adding %s.%02x as te-style neighbor (self)",
 			area->area_tag, sysid_print(ne_id),
@@ -1534,7 +1549,7 @@ static void lsp_build_pseudo(struct isis_lsp *lsp, struct isis_circuit *circuit,
 		if (circuit->area->newmetric) {
 			isis_tlvs_add_extended_reach(lsp->tlvs,
 						     ISIS_MT_IPV4_UNICAST,
-						     ne_id, 0, NULL);
+						     ne_id, 0, circuit->ext);
 			lsp_debug(
 				"ISIS (%s): Adding %s.%02x as te-style neighbor (peer)",
 				area->area_tag, sysid_print(ne_id),

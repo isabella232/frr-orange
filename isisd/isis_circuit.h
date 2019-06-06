@@ -26,6 +26,7 @@
 #include "vty.h"
 #include "if.h"
 #include "qobj.h"
+#include "hook.h"
 #include "prefix.h"
 #include "ferr.h"
 
@@ -149,6 +150,9 @@ struct isis_circuit {
 	QOBJ_FIELDS
 };
 DECLARE_QOBJ_TYPE(isis_circuit)
+
+DECLARE_HOOK(isis_circuit_type_update_hook, (struct isis_circuit * circuit),
+	     (circuit))
 
 void isis_circuit_init(void);
 struct isis_circuit *isis_circuit_new(void);

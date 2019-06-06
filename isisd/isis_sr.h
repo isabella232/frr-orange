@@ -52,23 +52,6 @@
 /* Default Route priority for ISIS Segment Routing */
 #define ISIS_SR_PRIORITY_DEFAULT	10
 
-/* macros and constants for segment routing */
-#define SET_RANGE_SIZE_MASK             0xffffff00
-#define GET_RANGE_SIZE_MASK             0x00ffffff
-#define SET_LABEL_MASK                  0xffffff00
-#define GET_LABEL_MASK                  0x00ffffff
-#define GET_INDEX(index)		ntohl(index)
-#define GET_LABEL(label)		(ntohl(label) >> 8) & GET_LABEL_MASK
-#define GET_RANGE_SIZE(srgb)                                                 \
-	(((srgb.range[0] << 16) | (srgb.range[1] << 8) | (srgb.range[2]))    \
-	 & GET_RANGE_SIZE_MASK)
-#define GET_RANGE_BASE(srgb)                                                 \
-	(SUBTLV_LEN(srgb.lower_bound) == 3 ? GET_LABEL(srgb.lower_bound)     \
-				         : GET_INDEX(srgb.lower_bound))
-
-#define SET_LABEL(label)		((label << 8) & SET_LABEL_MASK)
-#define SET_INDEX(index)		htonl(index)
-
 /* Label range for Adj-SID attribution purpose. Start just right after SRGB */
 #define ADJ_SID_MIN                     MPLS_DEFAULT_MAX_SRGB_LABEL
 #define ADJ_SID_MAX                     (MPLS_DEFAULT_MAX_SRGB_LABEL + 1000)
@@ -91,6 +74,7 @@
 /*
  * Following section define structure for Segment Routing management
  */
+#define IS_SR(a)	(a && a->enabled)
 
 /* SID type to make difference between loopback interfaces and others */
 enum sid_type { PREF_SID, ADJ_SID, LAN_ADJ_SID };
@@ -103,8 +87,8 @@ struct isis_sr_db {
 	/* Ongoing Update following an ISIS SPF */
 	bool update;
 
-	/* Flooding Scope: Level-1 or Level-2 */
-	uint8_t scope;
+	/* IPv4 or IPv6 Segment Routing */
+	uint8_t flags;
 
 	/* FRR SR node */
 	struct sr_node *self;
@@ -112,31 +96,39 @@ struct isis_sr_db {
 	/* List of neighbour SR nodes */
 	struct hash *neighbors;
 
-	/* List of SR prefix */
-	struct route_table *prefix;
+	/* Configured Prefix-SID mappings. */
+	struct route_table *prefix4_sids;
+	struct route_table *prefix6_sids;
 
 	/* Local SR info announced in Router Capability TLV 242 */
 
 	/* Algorithms supported by the node */
 	uint8_t algo[SR_ALGORITHM_COUNT];
 	/*
-	 * Segment Routing Global Block i.e. label range
+	 * Segment Routing Global Block lower & upper bound
 	 * Only one range supported in this code
 	 */
-	struct isis_srgb srgb;
+	uint32_t lower_bound;
+	uint32_t upper_bound;
+
 	/* Maximum SID Depth supported by the node */
 	uint8_t msd;
 };
 
-#define IS_SR(a)	(a->srdb && a->srdb->enabled)
+#define IS_SR(a)	(a && a->srdb.enabled)
 
 /* Structure aggregating all received SR info from LSPs by node */
 struct sr_node {
-	struct in_addr router_id; /* used to identify sender of LSP */
+	/* Node's System id. used to identify sender of LSP */
+	uint8_t sysid[ISIS_SYS_ID_LEN];
+
+	struct in_addr router_id;
+	char is_type; /* level-1 level-1-2 or level-2-only */
 
 	uint8_t algo[SR_ALGORITHM_COUNT]; /* Algorithms supported by the node */
 	/* Segment Routing Global Block i.e. label range */
 	struct isis_srgb srgb;
+
 	uint8_t msd; /* Maximum SID Depth */
 
 	/* List of Prefix & Link advertise by this node */
@@ -150,8 +142,8 @@ struct sr_node {
 
 /* Segment Routing - NHLFE info: support IPv4 Only */
 struct sr_nhlfe {
-	struct prefix_ipv4 prefv4;
-	struct in_addr nexthop;
+	struct prefix prefix;
+	union g_addr nexthop;
 	ifindex_t ifindex;
 	mpls_label_t label_in;
 	mpls_label_t label_out;
@@ -192,6 +184,7 @@ struct sr_prefix {
 
 	/* Back pointer to SR Node which advertise this Prefix */
 	struct sr_node *srn;
+	struct isis_area *area;
 
 	/*
 	 * Pointer to SR Node which is the next hop for this Prefix
@@ -206,6 +199,12 @@ struct sr_prefix {
 extern int isis_sr_init(void);
 extern void isis_sr_term(void);
 extern void isis_sr_finish(void);
+extern struct sr_prefix *isis_sr_prefix_sid_add(struct isis_area *area,
+						const struct prefix *prefix);
+extern void isis_sr_prefix_sid_del(struct sr_prefix *srp);
+extern struct sr_prefix *isis_sr_prefix_sid_find(const struct isis_area *area,
+						 const struct prefix *prefix);
+
 /* Segment Routing LSA update & delete functions */
 extern void isis_sr_ri_lsa_update(struct isis_lsa *lsa);
 extern void isis_sr_ri_lsa_delete(struct isis_lsa *lsa);
