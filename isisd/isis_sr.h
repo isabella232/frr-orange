@@ -74,7 +74,7 @@
 /*
  * Following section define structure for Segment Routing management
  */
-#define IS_SR(a)	(a && a->enabled)
+#define IS_SR(a)	(a && a->srdb.enabled)
 
 /* SID type to make difference between loopback interfaces and others */
 enum sid_type { PREF_SID, ADJ_SID, LAN_ADJ_SID };
@@ -86,6 +86,7 @@ struct isis_sr_db {
 
 	/* Ongoing Update following an ISIS SPF */
 	bool update;
+	struct thread *t_sr_update;
 
 	/* IPv4 or IPv6 Segment Routing */
 	uint8_t flags;
@@ -115,25 +116,27 @@ struct isis_sr_db {
 	uint8_t msd;
 };
 
-#define IS_SR(a)	(a && a->srdb.enabled)
-
 /* Structure aggregating all received SR info from LSPs by node */
 struct sr_node {
-	/* Node's System id. used to identify sender of LSP */
+
+	/* System ID of the SR Node */
 	uint8_t sysid[ISIS_SYS_ID_LEN];
 
+	/* Router ID for prefix lookup */
 	struct in_addr router_id;
+
+	/* LSP ID used to identify the corresponding LSP */
+	/* TODO: To be replace by a back pointer to the LSP ??? */
+	uint8_t lspid[ISIS_SYS_ID_LEN + 2];
+
 	char is_type; /* level-1 level-1-2 or level-2-only */
 
-	uint8_t algo[SR_ALGORITHM_COUNT]; /* Algorithms supported by the node */
-	/* Segment Routing Global Block i.e. label range */
-	struct isis_srgb srgb;
+	/* Router Capabilities */
+	struct isis_router_cap cap;
 
-	uint8_t msd; /* Maximum SID Depth */
-
-	/* List of Prefix & Link advertise by this node */
-	struct list *ext_prefix; /* For Node SID */
-	struct list *ext_link;   /* For Adj and LAN SID */
+	/* List of Prefix & IS advertise by this node */
+	struct list *pref_sids;	/* For Prefix SID inc. Node SID*/
+	struct list *adj_sids;	/* For Adjacency SID inc. LAN */
 
 	/* Pointer to FRR SR-Node or NULL if it is not a neighbor */
 	struct sr_node *neighbor;
@@ -142,38 +145,42 @@ struct sr_node {
 
 /* Segment Routing - NHLFE info: support IPv4 Only */
 struct sr_nhlfe {
-	struct prefix prefix;
-	union g_addr nexthop;
+	struct prefix_ipv4 prefv4;
+	struct in_addr nexthop;
+//	struct prefix prefix;
+//	union g_addr nexthop;
 	ifindex_t ifindex;
 	mpls_label_t label_in;
 	mpls_label_t label_out;
 };
 
-/* Structure aggregating all Segment Routing Link information */
-/* Link are generally advertised by pair: primary + backup */
-struct sr_link {
-	uint8_t id[7]; /* Extended Reachability Identifier */
+/* Structure aggregating all Segment Routing Adjacency information */
+/* which are generally advertised by pair: primary + backup */
+struct sr_adjacency {
+	uint8_t id[7]; /* Extended IS Reachability Identifier */
+	uint8_t neighbor[6]; /* Neighbor ID for Lan Adj SID */
 
-	/* Flags to manage this link parameters. */
-	uint8_t flags[2];
+	/* Flags to manage this Adjacency parameters. */
+	uint8_t flags;
 
 	/* Segment Routing ID */
-	uint32_t sid[2];
+	uint32_t sid;
 	enum sid_type type;
 
-	/* SR NHLFE for this link */
-	struct sr_nhlfe nhlfe[2];
+	/* SR NHLFE for this Adjacency */
+	struct sr_nhlfe nhlfe;
 
-	/* Back pointer to SR Node which advertise this Link */
+	/* Back pointer to SR Node which advertise this Adjacency */
 	struct sr_node *srn;
 };
 
 /* Structure aggregating all Segment Routing Prefix information */
 struct sr_prefix {
-	struct prefix_ipv4 prefix;
+	uint8_t id[8]; /* LSP Identifier */
 
-	/* Flags to manage this prefix parameters. */
+	/* Flags & Algo to manage this prefix parameters. */
 	uint8_t flags;
+	uint8_t algorithm;
 
 	/* Segment Routing ID */
 	uint32_t sid;
@@ -184,7 +191,6 @@ struct sr_prefix {
 
 	/* Back pointer to SR Node which advertise this Prefix */
 	struct sr_node *srn;
-	struct isis_area *area;
 
 	/*
 	 * Pointer to SR Node which is the next hop for this Prefix
@@ -194,29 +200,20 @@ struct sr_prefix {
 };
 
 /* Prototypes definition */
-#ifdef SR_FUNC
 /* Segment Routing initialization functions */
-extern int isis_sr_init(void);
-extern void isis_sr_term(void);
-extern void isis_sr_finish(void);
+extern void isis_sr_init(struct isis_area *area);
+extern void isis_sr_start(struct isis_area *area);
+extern void isis_sr_stop(struct isis_area *area);
+extern void isis_sr_term(struct isis_area *area);
+extern void isis_sr_srgb_update(struct isis_area *area);
+extern void isis_sr_msd_update(struct isis_area *area);
 extern struct sr_prefix *isis_sr_prefix_sid_add(struct isis_area *area,
 						const struct prefix *prefix);
 extern void isis_sr_prefix_sid_del(struct sr_prefix *srp);
 extern struct sr_prefix *isis_sr_prefix_sid_find(const struct isis_area *area,
 						 const struct prefix *prefix);
 
-/* Segment Routing LSA update & delete functions */
-extern void isis_sr_ri_lsa_update(struct isis_lsa *lsa);
-extern void isis_sr_ri_lsa_delete(struct isis_lsa *lsa);
-extern void isis_sr_ext_link_lsa_update(struct isis_lsa *lsa);
-extern void isis_sr_ext_link_lsa_delete(struct isis_lsa *lsa);
-extern void isis_sr_ext_prefix_lsa_update(struct isis_lsa *lsa);
-extern void isis_sr_ext_prefix_lsa_delete(struct isis_lsa *lsa);
-/* Segment Routing configuration functions */
-extern uint32_t get_ext_link_label_value(void);
-extern void isis_sr_config_write_router(struct vty *vty);
-extern void isis_sr_update_prefix(struct interface *ifp, struct prefix *p);
 /* Segment Routing re-routing function */
-extern void isis_sr_update_timer_add(struct isis *isis);
-#endif
+extern void isis_sr_update_timer_add(struct isis_area *area);
+
 #endif /* _FRR_ISIS_SR_H */

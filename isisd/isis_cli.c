@@ -1307,8 +1307,8 @@ DEFPY (isis_sr_enable,
        SR_STR
        "Enable Segment Routing\n")
 {
-	nb_cli_enqueue_change(vty, "./segment-routing/enabled", NB_OP_CREATE,
-			      NULL);
+	nb_cli_enqueue_change(vty, "./segment-routing/enabled", NB_OP_MODIFY,
+			      "true");
 
 	return nb_cli_apply_changes(vty, NULL);
 }
@@ -1320,8 +1320,8 @@ DEFPY (no_isis_sr_enable,
        SR_STR
        "Disable Segment Routing\n")
 {
-	nb_cli_enqueue_change(vty, "./segment-routing/enabled", NB_OP_DESTROY,
-			      NULL);
+	nb_cli_enqueue_change(vty, "./segment-routing/enabled", NB_OP_MODIFY,
+			      "false");
 
 	return nb_cli_apply_changes(vty, NULL);
 }

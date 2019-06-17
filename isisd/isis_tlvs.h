@@ -434,7 +434,6 @@ enum ext_subtlv_size {
 
 	ISIS_SUBTLV_HDR_SIZE = 2,
 	ISIS_SUBTLV_DEF_SIZE = 4,
-	ISIS_SUBTLV_DEF_LEN = 6,
 
 	ISIS_SUBTLV_MAX_SIZE = 180
 };
@@ -495,8 +494,8 @@ struct isis_ext_subtlvs {
 	uint32_t remote_as; /* Remote AS Number sub-TLV - RFC5316 */
 	struct in_addr remote_ip; /* IPv4 Remote ASBR ID Sub-TLV - RFC5316 */
 	/* Segment Routing Adjacency & LAN Adjacency Segment ID */
-	struct isis_adj_sid adj_sid[2];
-	struct isis_lan_adj_sid ladj_sid[2];
+	struct isis_item_list adj_sid;
+	struct isis_item_list lan_sid;
 	uint32_t delay; /* Average Link Delay  - RFC 8570 */
 	uint32_t min_delay; /* Low Link Delay  - RFC 8570 */
 	uint32_t max_delay; /* High Link Delay  - RFC 8570 */
@@ -572,6 +571,7 @@ void isis_tlvs_set_te_router_id(struct isis_tlvs *tlvs,
 				const struct in_addr *id);
 void isis_tlvs_add_oldstyle_ip_reach(struct isis_tlvs *tlvs,
 				     struct prefix_ipv4 *dest, uint8_t metric);
+struct sr_prefix;
 void isis_tlvs_add_extended_ip_reach(struct isis_tlvs *tlvs,
 				     struct prefix_ipv4 *dest, uint32_t metric,
 				     struct sr_prefix *srp);
@@ -582,6 +582,11 @@ void isis_tlvs_add_ipv6_dstsrc_reach(struct isis_tlvs *tlvs, uint16_t mtid,
 				     struct prefix_ipv6 *dest,
 				     struct prefix_ipv6 *src,
 				     uint32_t metric);
+void isis_tlvs_add_adj_sid(struct isis_ext_subtlvs *exts,
+			   struct isis_adj_sid *adj);
+void isis_tlvs_add_lan_adj_sid(struct isis_ext_subtlvs *exts,
+			       struct isis_lan_adj_sid *lan);
+
 void isis_tlvs_add_oldstyle_reach(struct isis_tlvs *tlvs, uint8_t *id,
 				  uint8_t metric);
 void isis_tlvs_add_extended_reach(struct isis_tlvs *tlvs, uint16_t mtid,

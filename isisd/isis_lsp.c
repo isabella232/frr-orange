@@ -931,7 +931,7 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 	/* Add Router Capability TLV if Segment Routing is enable */
 	if (IS_SR(area) && isis->router_id != 0) {
 		struct in_addr id = {.s_addr = isis->router_id};
-		isis_tlvs_set_router_capability(lsp->tlvs, id, area->srdb);
+		isis_tlvs_set_router_capability(lsp->tlvs, id, &area->srdb);
 		lsp_debug("ISIS (%s): Adding Router Capabilities information",
 			  area->area_tag);
 	}
@@ -1032,8 +1032,7 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 					srp = isis_sr_prefix_sid_find(
 					                        area, (struct prefix *)ipv4);
 					isis_tlvs_add_extended_ip_reach(
-						lsp->tlvs, ipv4, metric,
-						circuit->pref_sid, srp);
+						lsp->tlvs, ipv4, metric, srp);
 				}
 			}
 		}

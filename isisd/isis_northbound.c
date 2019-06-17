@@ -1524,9 +1524,9 @@ static int isis_instance_mpls_te_router_address_destroy(enum nb_event event,
  * XPath: /frr-isisd:isis/instance/segment-routing/enabled
  */
 static int
-isis_instance_segment_routing_create(enum nb_event event,
-				     const struct lyd_node *dnode,
-				     union nb_resource *resource)
+isis_instance_segment_routing_enabled_modify(enum nb_event event,
+					     const struct lyd_node *dnode,
+					     union nb_resource *resource)
 {
 	struct isis_area *area;
 
@@ -1534,28 +1534,17 @@ isis_instance_segment_routing_create(enum nb_event event,
 		return NB_OK;
 
 	area = nb_running_get_entry(dnode, NULL, true);
-
-	if (!IS_SR(area)) {
-		if (IS_DEBUG_ISIS(DEBUG_EVENTS))
-			zlog_debug("SR: Segment Routing: OFF -> ON");
-		isis_sr_start(area);
-	}
-
-	return NB_OK;
-}
-
-static int
-isis_instance_segment_routing_destroy(enum nb_event event,
-				      const struct lyd_node *dnode,
-				      union nb_resource *resource)
-{
-	struct isis_area *area;
-
-	area = nb_running_get_entry(dnode, NULL, true);
+	area->srdb.enabled = yang_dnode_get_bool(dnode, NULL);
 
 	if IS_SR(area) {
 		if (IS_DEBUG_ISIS(DEBUG_EVENTS))
+			zlog_debug("SR: Segment Routing: OFF -> ON");
+
+		isis_sr_start(area);
+	} else {
+		if (IS_DEBUG_ISIS(DEBUG_EVENTS))
 			zlog_debug("SR: Segment Routing: ON -> OFF");
+
 		isis_sr_stop(area);
 	}
 
@@ -3447,8 +3436,7 @@ const struct frr_yang_module_info frr_isisd_info = {
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/enabled",
-			.cbs.create = isis_instance_segment_routing_create,
-			.cbs.destroy = isis_instance_segment_routing_destroy,
+			.cbs.modify = isis_instance_segment_routing_enabled_modify,
 			.cbs.cli_show = cli_show_isis_sr_enabled,
 		},
 		{
