@@ -534,7 +534,6 @@ void isis_circuit_if_bind(struct isis_circuit *circuit, struct interface *ifp)
 		assert(ifp->info == circuit);
 	else
 		ifp->info = circuit;
-	isis_link_params_update(circuit, ifp);
 }
 
 void isis_circuit_if_unbind(struct isis_circuit *circuit, struct interface *ifp)

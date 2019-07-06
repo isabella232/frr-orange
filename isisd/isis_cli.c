@@ -1430,6 +1430,7 @@ DEFPY (isis_sr_prefix_sid,
        "Index value inside SRGB (lower_bound < index < upper_bound)\n"
        "Don't request Penultimate Hop Popping (PHP)\n")
 {
+
 	nb_cli_enqueue_change(vty, ".", NB_OP_CREATE, NULL);
 	nb_cli_enqueue_change(vty, "./sid-index", NB_OP_MODIFY, index_str);
 	if (no_php)

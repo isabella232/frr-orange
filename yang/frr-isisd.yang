@@ -720,9 +720,15 @@ module frr-isisd {
       }
 
       container segment-routing {
-        presence "Present if Segment Routing is enabled.";
         description
-          "Enables Segment Routing";
+          "Segment Routing global configuration.";
+        leaf enabled {
+          type boolean;
+          must "(. = 'false') or (../../is-type != 'level-1-2')";
+          default "false";
+          description
+            "Enables segment-routing protocol extensions.";
+        }
         container srgb {
           description
             "Global blocks to be advertised.";
@@ -736,7 +742,7 @@ module frr-isisd {
               type uint32;
               default "23999";
               description
-                "Upper value of the label range.";
+                "Upper value in the label range.";
           }
         }
         container msd {

@@ -187,7 +187,7 @@ struct isis_lan_adj_sid {
 
 	uint8_t flags;
 	uint8_t weight;
-	uint8_t neighbor_id[6];
+	uint8_t neighbor_id[ISIS_SYS_ID_LEN];
 	uint32_t sid;
 };
 
@@ -493,9 +493,7 @@ struct isis_ext_subtlvs {
 	uint32_t te_metric; /* Traffic Engineering Metric - RFC 5305 */
 	uint32_t remote_as; /* Remote AS Number sub-TLV - RFC5316 */
 	struct in_addr remote_ip; /* IPv4 Remote ASBR ID Sub-TLV - RFC5316 */
-	/* Segment Routing Adjacency & LAN Adjacency Segment ID */
-	struct isis_item_list adj_sid;
-	struct isis_item_list lan_sid;
+
 	uint32_t delay; /* Average Link Delay  - RFC 8570 */
 	uint32_t min_delay; /* Low Link Delay  - RFC 8570 */
 	uint32_t max_delay; /* High Link Delay  - RFC 8570 */
@@ -504,6 +502,10 @@ struct isis_ext_subtlvs {
 	float res_bw; /* Unidirectional Residual Bandwidth - RFC 8570 */
 	float ava_bw; /* Unidirectional Available Bandwidth - RFC 8570 */
 	float use_bw; /* Unidirectional Utilized Bandwidth - RFC 8570 */
+
+	/* Segment Routing Adjacency & LAN Adjacency Segment ID */
+	struct isis_item_list adj_sid;
+	struct isis_item_list lan_sid;
 };
 
 #define IS_COMPAT_MT_TLV(tlv_type)                                             \
@@ -582,9 +584,14 @@ void isis_tlvs_add_ipv6_dstsrc_reach(struct isis_tlvs *tlvs, uint16_t mtid,
 				     struct prefix_ipv6 *dest,
 				     struct prefix_ipv6 *src,
 				     uint32_t metric);
+struct isis_ext_subtlvs *isis_alloc_ext_subtlvs(void);
 void isis_tlvs_add_adj_sid(struct isis_ext_subtlvs *exts,
 			   struct isis_adj_sid *adj);
+void isis_tlvs_del_adj_sid(struct isis_ext_subtlvs *exts,
+			   struct isis_adj_sid *adj);
 void isis_tlvs_add_lan_adj_sid(struct isis_ext_subtlvs *exts,
+			       struct isis_lan_adj_sid *lan);
+void isis_tlvs_del_lan_adj_sid(struct isis_ext_subtlvs *exts,
 			       struct isis_lan_adj_sid *lan);
 
 void isis_tlvs_add_oldstyle_reach(struct isis_tlvs *tlvs, uint8_t *id,

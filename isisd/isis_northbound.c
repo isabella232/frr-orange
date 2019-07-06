@@ -1386,8 +1386,8 @@ static int isis_instance_mpls_te_create(enum nb_event event,
 
 		struct mpls_te_area *new;
 
-		zlog_debug("ISIS MPLS-TE: Initialize area %s",
-			area->area_tag);
+		zlog_debug("ISIS-TE(%s): Initialize MPLS Traffic Engineering",
+			   area->area_tag);
 
 		new = XCALLOC(MTYPE_ISIS_MPLS_TE, sizeof(struct mpls_te_area));
 
@@ -1464,6 +1464,9 @@ static int isis_instance_mpls_te_destroy(enum nb_event event,
 			lsp_regenerate_schedule(circuit->area, circuit->is_type,
 						0);
 	}
+
+	zlog_debug("ISIS-TE(%s): Disabled MPLS Traffic Engineering",
+		   area->area_tag);
 
 	return NB_OK;
 }
@@ -1654,9 +1657,15 @@ static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_create(
 	yang_dnode_get_prefix(&prefix, dnode, "./prefix");
 
 	srp = isis_sr_prefix_sid_add(area, &prefix);
-	nb_running_set_entry(dnode, srp);
-
-	return NB_OK;
+	if (srp != NULL) {
+		nb_running_set_entry(dnode, srp);
+		return NB_OK;
+	} else {
+		flog_warn(
+			EC_LIB_NB_CB_CONFIG_VALIDATE,
+			"Could not create prefix SID");
+		return NB_ERR_VALIDATION;
+	}
 }
 
 static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy(
@@ -1669,7 +1678,7 @@ static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy(
 		return NB_OK;
 
 	srp = nb_running_unset_entry(dnode);
-	area = srp->area;
+	area = srp->srn->area;
 	isis_sr_prefix_sid_del(srp);
 	lsp_regenerate_schedule(area, area->is_type, 0);
 
@@ -1684,8 +1693,14 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish(
 	struct isis_area *area;
 
 	srp = nb_running_get_entry(dnode, NULL, true);
-	area = srp->area;
-	lsp_regenerate_schedule(area, area->is_type, 0);
+	if (srp) {
+		area = srp->srn->area;
+		lsp_regenerate_schedule(area, area->is_type, 0);
+	} else {
+		flog_warn(
+			EC_LIB_NB_CB_CONFIG_VALIDATE,
+			"Invalid Prefix SID");
+	}
 }
 
 /*
@@ -1698,13 +1713,25 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify(
 	union nb_resource *resource)
 {
 	struct sr_prefix *srp;
+	uint32_t sid;
 
 	if (event != NB_EV_APPLY)
 		return NB_OK;
 
 	srp = nb_running_get_entry(dnode, NULL, true);
-	srp->sid = yang_dnode_get_uint32(dnode, NULL);
-
+	sid = yang_dnode_get_uint32(dnode, NULL);
+	if (srp) {
+		if (sid > srp->srn->area->srdb.upper_bound - 1) {
+			flog_warn(
+				EC_LIB_NB_CB_CONFIG_VALIDATE,
+				"Index is out of SRGB range");
+			isis_sr_prefix_sid_del(srp);
+			return NB_ERR_VALIDATION;
+		} else {
+			srp->sid = sid;
+			srp->type = PREF_SID;
+		}
+	}
 	return NB_OK;
 }
 
@@ -1724,6 +1751,9 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_last_hop_behavior_modify
 		return NB_OK;
 
 	srp = nb_running_get_entry(dnode, NULL, true);
+	if (srp == NULL)
+		return NB_OK;
+
 	last_hop_behavior = yang_dnode_get_enum(dnode, NULL);
 	/* TODO: use constants. */
 	switch (last_hop_behavior) {
@@ -1732,8 +1762,6 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_last_hop_behavior_modify
 		break;
 	case 1:
 		UNSET_FLAG(srp->flags, ISIS_PREFIX_SID_NO_PHP);
-		//srp->nhlfe.label_in = index2label(srp->sid, OspfSR.self->srgb);
-		srp->nhlfe.label_out = MPLS_LABEL_IMPLICIT_NULL;
 		break;
 	}
 
@@ -3436,42 +3464,58 @@ const struct frr_yang_module_info frr_isisd_info = {
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/enabled",
-			.cbs.modify = isis_instance_segment_routing_enabled_modify,
-			.cbs.cli_show = cli_show_isis_sr_enabled,
+			.cbs = {
+				.modify = isis_instance_segment_routing_enabled_modify,
+				.cli_show = cli_show_isis_sr_enabled,
+			},
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/srgb",
-			.cbs.apply_finish = isis_instance_segment_routing_srgb_lower_bound_apply_finish,
-			.cbs.cli_show = cli_show_isis_srgb,
+			.cbs = {
+				.apply_finish = isis_instance_segment_routing_srgb_lower_bound_apply_finish,
+				.cli_show = cli_show_isis_srgb,
+			},
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/srgb/lower-bound",
-			.cbs.modify = isis_instance_segment_routing_srgb_lower_bound_modify,
+			.cbs = {
+				.modify = isis_instance_segment_routing_srgb_lower_bound_modify,
+			},
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/srgb/upper-bound",
-			.cbs.modify = isis_instance_segment_routing_srgb_upper_bound_modify,
+			.cbs = {
+				.modify = isis_instance_segment_routing_srgb_upper_bound_modify,
+			},
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/msd/node-msd",
-			.cbs.modify = isis_instance_segment_routing_msd_node_msd_modify,
-			.cbs.destroy = isis_instance_segment_routing_msd_node_msd_destroy,
-			.cbs.cli_show = cli_show_isis_node_msd,
+			.cbs = {
+				.modify = isis_instance_segment_routing_msd_node_msd_modify,
+				.destroy = isis_instance_segment_routing_msd_node_msd_destroy,
+				.cli_show = cli_show_isis_node_msd,
+			},
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid",
-			.cbs.create = isis_instance_segment_routing_prefix_sid_map_prefix_sid_create,
-			.cbs.destroy = isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy,
-			.cbs.apply_finish = isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish,
-			.cbs.cli_show = cli_show_isis_prefix_sid,
+			.cbs = {
+				.create = isis_instance_segment_routing_prefix_sid_map_prefix_sid_create,
+				.destroy = isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy,
+				.apply_finish = isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish,
+				.cli_show = cli_show_isis_prefix_sid,
+			},
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-index",
-			.cbs.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify,
+			.cbs = {
+				.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify,
+			},
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/last-hop-behavior",
-			.cbs.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_last_hop_behavior_modify,
+			.cbs = {
+				.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_last_hop_behavior_modify,
+			},
 		},
 		{
 			.xpath = "/frr-interface:lib/interface/frr-isisd:isis",

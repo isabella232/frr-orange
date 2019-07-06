@@ -109,6 +109,6 @@ struct mpls_te_area {
 /* Prototypes. */
 void isis_mpls_te_init(void);
 void isis_link_params_update(struct isis_circuit *, struct interface *);
-void isis_mpls_te_update(struct interface *);
+int isis_mpls_te_update(struct interface *);
 
 #endif /* _ZEBRA_ISIS_MPLS_TE_H */

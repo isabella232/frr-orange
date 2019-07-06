@@ -77,7 +77,7 @@
 #define IS_SR(a)	(a && a->srdb.enabled)
 
 /* SID type to make difference between loopback interfaces and others */
-enum sid_type { PREF_SID, ADJ_SID, LAN_ADJ_SID };
+enum sid_type { PREF_SID = 1, ADJ_SID, LAN_ADJ_SID };
 
 /* Structure aggregating all ISIS Segment Routing information for the node */
 struct isis_sr_db {
@@ -96,10 +96,6 @@ struct isis_sr_db {
 
 	/* List of neighbour SR nodes */
 	struct hash *neighbors;
-
-	/* Configured Prefix-SID mappings. */
-	struct route_table *prefix4_sids;
-	struct route_table *prefix6_sids;
 
 	/* Local SR info announced in Router Capability TLV 242 */
 
@@ -129,8 +125,6 @@ struct sr_node {
 	/* TODO: To be replace by a back pointer to the LSP ??? */
 	uint8_t lspid[ISIS_SYS_ID_LEN + 2];
 
-	char is_type; /* level-1 level-1-2 or level-2-only */
-
 	/* Router Capabilities */
 	struct isis_router_cap cap;
 
@@ -140,6 +134,9 @@ struct sr_node {
 
 	/* Pointer to FRR SR-Node or NULL if it is not a neighbor */
 	struct sr_node *neighbor;
+
+	/* Back pointer to area */
+	struct isis_area *area;
 };
 
 
@@ -157,8 +154,8 @@ struct sr_nhlfe {
 /* Structure aggregating all Segment Routing Adjacency information */
 /* which are generally advertised by pair: primary + backup */
 struct sr_adjacency {
-	uint8_t id[7]; /* Extended IS Reachability Identifier */
-	uint8_t neighbor[6]; /* Neighbor ID for Lan Adj SID */
+	uint8_t id[ISIS_SYS_ID_LEN + 2]; /* Extended IS Reachability Identifier */
+	uint8_t neighbor[ISIS_SYS_ID_LEN]; /* Neighbor ID */
 
 	/* Flags to manage this Adjacency parameters. */
 	uint8_t flags;
@@ -176,7 +173,7 @@ struct sr_adjacency {
 
 /* Structure aggregating all Segment Routing Prefix information */
 struct sr_prefix {
-	uint8_t id[8]; /* LSP Identifier */
+	uint8_t id[ISIS_SYS_ID_LEN + 2]; /* LSP Identifier */
 
 	/* Flags & Algo to manage this prefix parameters. */
 	uint8_t flags;

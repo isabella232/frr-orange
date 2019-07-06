@@ -199,13 +199,6 @@ static int process_p2p_hello(struct iih_info *iih)
 	changed |= tlvs_to_adj_mt_set(iih->tlvs, iih->v4_usable, iih->v6_usable,
 				      adj);
 
-	/* Update MPLS TE Remote IP address parameter if possible */
-	if (IS_MPLS_TE(iih->circuit->area->mta)
-	    && IS_EXT_TE(iih->circuit->ext)
-	    && adj->ipv4_address_count)
-		iih->circuit->ext->neigh_addr.s_addr =
-			adj->ipv4_addresses[0].s_addr;
-
 	/* lets take care of the expiry */
 	THREAD_TIMER_OFF(adj->t_expire);
 	thread_add_timer(master, isis_adj_expire, adj, (long)adj->hold_time,

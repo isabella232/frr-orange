@@ -48,6 +48,7 @@
 #include "isisd/isis_common.h"
 #include "isisd/isis_flags.h"
 #include "isisd/isis_circuit.h"
+#include "isisd/isis_adjacency.h"
 #include "isisd/isisd.h"
 #include "isisd/isis_lsp.h"
 #include "isisd/isis_pdu.h"
@@ -58,6 +59,7 @@
 #include "isisd/isis_spf.h"
 #include "isisd/isis_te.h"
 #include "isisd/isis_sr.h"
+#include "isisd/isis_zebra.h"
 
 const char *mode2text[] = {"Disable", "Area", "AS", "Emulate"};
 
@@ -74,23 +76,29 @@ void isis_link_params_update(struct isis_circuit *circuit,
 	struct prefix_ipv4 *addr;
 	struct isis_ext_subtlvs *ext;
 
-	/* Sanity Check */
-	if ((circuit == NULL) || (ifp == NULL))
+	/* Check if TE is enable or not */
+	if (!circuit->area || !IS_MPLS_TE(circuit->area->mta))
 		return;
 
-	zlog_info("MPLS-TE: Initialize circuit parameters for interface %s",
-		  ifp->name);
+	/* Sanity Check */
+	if ((circuit == NULL) || (ifp == NULL)
+	    || (circuit->state != C_STATE_UP))
+		return;
+
+	zlog_debug("TE(%s): Update circuit parameters for interface %s",
+		   circuit->area->area_tag, ifp->name);
 
 	/* Check if MPLS TE Circuit context has not been already created */
-	if (circuit->ext == NULL)
-		circuit->ext = XCALLOC(MTYPE_ISIS_CIRCUIT,
-				       sizeof(struct isis_ext_subtlvs));
+	if (circuit->ext == NULL) {
+		circuit->ext = isis_alloc_ext_subtlvs();
+		zlog_debug("  |- Allocated new extended subTLVs for interface %s",
+			   ifp->name);
+	}
 
 	ext = circuit->ext;
 
 	/* Fulfill Extended subTLVs from interface link parameters */
 	if (HAS_LINK_PARAMS(ifp)) {
-		ext->status = enable;
 		/* STD_TE metrics */
 		if (IS_PARAM_SET(ifp->link_params, LP_ADM_GRP)) {
 			ext->adm_group = ifp->link_params->admin_grp;
@@ -202,8 +210,11 @@ void isis_link_params_update(struct isis_circuit *circuit,
 			UNSET_SUBTLV(ext, EXT_RMT_AS);
 			UNSET_SUBTLV(ext, EXT_RMT_IP);
 		}
-
+		zlog_debug("  |- New MPLS-TE link parameters status 0x%x",
+			   ext->status);
 	} else {
+		zlog_debug("  |- Reset Extended subTLVs status 0x%x",
+			   ext->status);
 		/* Reset TE subTLVs keeping SR one's */
 		if (IS_SUBTLV(ext, EXT_ADJ_SID))
 			ext->status = EXT_ADJ_SID;
@@ -216,17 +227,40 @@ void isis_link_params_update(struct isis_circuit *circuit,
 	return;
 }
 
-void isis_mpls_te_update(struct interface *ifp)
+static int isis_link_update_adj_hook(struct isis_adjacency *adj)
+{
+
+	struct isis_circuit *circuit = adj->circuit;
+
+	/* Update MPLS TE Remote IP address parameter if possible */
+	if (IS_MPLS_TE(circuit->area->mta)
+	    && IS_EXT_TE(circuit->ext)
+	    && adj->ipv4_address_count > 0) {
+		zlog_debug("TE(%s): Update MPLS-TE link parameters with Remote IP addr %s for interface %s",
+			  circuit->area->area_tag,
+			  inet_ntoa(adj->ipv4_addresses[0]),
+			  circuit->interface->name);
+		IPV4_ADDR_COPY(&circuit->ext->neigh_addr,
+			       &adj->ipv4_addresses[0]);
+		SET_SUBTLV(circuit->ext, EXT_NEIGH_ADDR);
+		zlog_debug("  |- New Extended subTLVs status 0x%x", circuit->ext->status);
+	}
+
+	return 0;
+}
+
+int isis_mpls_te_update(struct interface *ifp)
 {
 	struct isis_circuit *circuit;
+	uint8_t rc = 1;
 
 	/* Sanity Check */
 	if (ifp == NULL)
-		return;
+		return rc;
 
 	/* Get circuit context from interface */
 	if ((circuit = circuit_scan_by_ifp(ifp)) == NULL)
-		return;
+		return rc;
 
 	/* Update TE TLVs ... */
 	isis_link_params_update(circuit, ifp);
@@ -235,7 +269,8 @@ void isis_mpls_te_update(struct interface *ifp)
 	if (circuit->area && IS_MPLS_TE(circuit->area->mta))
 		lsp_regenerate_schedule(circuit->area, circuit->is_type, 0);
 
-	return;
+	rc = 0;
+	return rc;
 }
 
 /*------------------------------------------------------------------------*
@@ -431,6 +466,11 @@ DEFUN (show_isis_mpls_te_interface,
 /* Initialize MPLS_TE */
 void isis_mpls_te_init(void)
 {
+
+	/* Register Circuit and Adjacency hook */
+	hook_register(isis_if_new_hook, isis_mpls_te_update);
+	hook_register(isis_adj_state_change_hook, isis_link_update_adj_hook);
+
 
 #ifndef FABRICD
 	/* Register new VTY commands */

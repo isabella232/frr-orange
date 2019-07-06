@@ -11,6 +11,8 @@ vtysh_scan += \
 	$(top_srcdir)/isisd/isis_redist.c \
 	$(top_srcdir)/isisd/isis_spf.c \
 	$(top_srcdir)/isisd/isis_te.c \
+	$(top_srcdir)/isisd/isis_sr.c \
+	$(top_srcdir)/isisd/isis_vty_common.c \
 	$(top_srcdir)/isisd/isis_vty_fabricd.c \
 	$(top_srcdir)/isisd/isisd.c \
 	# end
