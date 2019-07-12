@@ -1694,6 +1694,7 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish(
 
 	srp = nb_running_get_entry(dnode, NULL, true);
 	if (srp) {
+		isis_sr_prefix_commit(srp);
 		area = srp->srn->area;
 		lsp_regenerate_schedule(area, area->is_type, 0);
 	} else {

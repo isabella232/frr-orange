@@ -118,9 +118,6 @@ struct sr_node {
 	/* System ID of the SR Node */
 	uint8_t sysid[ISIS_SYS_ID_LEN];
 
-	/* Router ID for prefix lookup */
-	struct in_addr router_id;
-
 	/* LSP ID used to identify the corresponding LSP */
 	/* TODO: To be replace by a back pointer to the LSP ??? */
 	uint8_t lspid[ISIS_SYS_ID_LEN + 2];
@@ -142,10 +139,8 @@ struct sr_node {
 
 /* Segment Routing - NHLFE info: support IPv4 Only */
 struct sr_nhlfe {
-	struct prefix_ipv4 prefv4;
 	struct in_addr nexthop;
-//	struct prefix prefix;
-//	union g_addr nexthop;
+	struct in6_addr nexthop6;
 	ifindex_t ifindex;
 	mpls_label_t label_in;
 	mpls_label_t label_out;
@@ -156,6 +151,9 @@ struct sr_nhlfe {
 struct sr_adjacency {
 	uint8_t id[ISIS_SYS_ID_LEN + 2]; /* Extended IS Reachability Identifier */
 	uint8_t neighbor[ISIS_SYS_ID_LEN]; /* Neighbor ID */
+
+	/* prefix IPv4 or IPv6 */
+	struct prefix prefix;
 
 	/* Flags to manage this Adjacency parameters. */
 	uint8_t flags;
@@ -174,6 +172,9 @@ struct sr_adjacency {
 /* Structure aggregating all Segment Routing Prefix information */
 struct sr_prefix {
 	uint8_t id[ISIS_SYS_ID_LEN + 2]; /* LSP Identifier */
+
+	/* prefix IPv4 or IPv6 */
+	struct prefix prefix;
 
 	/* Flags & Algo to manage this prefix parameters. */
 	uint8_t flags;
@@ -207,6 +208,7 @@ extern void isis_sr_msd_update(struct isis_area *area);
 extern struct sr_prefix *isis_sr_prefix_sid_add(struct isis_area *area,
 						const struct prefix *prefix);
 extern void isis_sr_prefix_sid_del(struct sr_prefix *srp);
+extern void isis_sr_prefix_commit(struct sr_prefix *srp);
 extern struct sr_prefix *isis_sr_prefix_sid_find(const struct isis_area *area,
 						 const struct prefix *prefix);
 

@@ -74,6 +74,7 @@ void isis_link_params_update(struct isis_circuit *circuit,
 {
 	int i;
 	struct prefix_ipv4 *addr;
+	struct prefix_ipv6 *addr6;
 	struct isis_ext_subtlvs *ext;
 
 	/* Check if TE is enable or not */
@@ -107,27 +108,49 @@ void isis_link_params_update(struct isis_circuit *circuit,
 		else
 			UNSET_SUBTLV(ext, EXT_ADM_GRP);
 
-		/* If known, register local IP addr from ip_addr list */
+		/* If known, register local IPv4 addr from ip_addr list */
 		if (circuit->ip_addrs != NULL
 		    && listcount(circuit->ip_addrs) != 0) {
 			addr = (struct prefix_ipv4 *)listgetdata(
 				(struct listnode *)listhead(circuit->ip_addrs));
-			ext->local_addr.s_addr = addr->prefix.s_addr;
+			IPV4_ADDR_COPY(&ext->local_addr, &addr->prefix);
 			SET_SUBTLV(ext, EXT_LOCAL_ADDR);
 		} else
 			UNSET_SUBTLV(ext, EXT_LOCAL_ADDR);
 
-		/* Same for Remote IP address */
+		/* Same for Remote IPv4 address */
 		if (circuit->circ_type == CIRCUIT_T_P2P) {
 			struct isis_adjacency *adj = circuit->u.p2p.neighbor;
 			if (adj && adj->adj_state == ISIS_ADJ_UP
 			    && adj->ipv4_address_count) {
-				ext->neigh_addr.s_addr =
-					adj->ipv4_addresses[0].s_addr;
+				IPV4_ADDR_COPY(&ext->neigh_addr,
+					       &adj->ipv4_addresses[0]);
 				SET_SUBTLV(ext, EXT_NEIGH_ADDR);
 			}
 		} else
 			UNSET_SUBTLV(ext, EXT_NEIGH_ADDR);
+
+		/* If known, register local IPv6 addr from ip_addr list */
+		if (circuit->ipv6_non_link != NULL
+		    && listcount(circuit->ipv6_non_link) != 0) {
+			addr6 = (struct prefix_ipv6 *)listgetdata((
+				struct listnode *)listhead(circuit->ipv6_non_link));
+			IPV6_ADDR_COPY(&ext->local_addr6, &addr6->prefix);
+			SET_SUBTLV(ext, EXT_LOCAL_ADDR6);
+		} else
+			UNSET_SUBTLV(ext, EXT_LOCAL_ADDR6);
+
+		/* Same for Remote IPv6 address */
+		if (circuit->circ_type == CIRCUIT_T_P2P) {
+			struct isis_adjacency *adj = circuit->u.p2p.neighbor;
+			if (adj && adj->adj_state == ISIS_ADJ_UP
+			    && adj->ipv6_address_count) {
+				IPV6_ADDR_COPY(&ext->neigh_addr6,
+					       &adj->ipv6_addresses[0]);
+				SET_SUBTLV(ext, EXT_NEIGH_ADDR6);
+			}
+		} else
+			UNSET_SUBTLV(ext, EXT_NEIGH_ADDR6);
 
 		if (IS_PARAM_SET(ifp->link_params, LP_MAX_BW)) {
 			ext->max_bw = ifp->link_params->max_bw;
@@ -231,11 +254,14 @@ static int isis_link_update_adj_hook(struct isis_adjacency *adj)
 {
 
 	struct isis_circuit *circuit = adj->circuit;
+	char buf[PREFIX2STR_BUFFER];
 
 	/* Update MPLS TE Remote IP address parameter if possible */
-	if (IS_MPLS_TE(circuit->area->mta)
-	    && IS_EXT_TE(circuit->ext)
-	    && adj->ipv4_address_count > 0) {
+	if (!IS_MPLS_TE(circuit->area->mta) || !IS_EXT_TE(circuit->ext))
+		return 0;
+
+	/* IPv4 first */
+	if (adj->ipv4_address_count > 0) {
 		zlog_debug("TE(%s): Update MPLS-TE link parameters with Remote IP addr %s for interface %s",
 			  circuit->area->area_tag,
 			  inet_ntoa(adj->ipv4_addresses[0]),
@@ -245,6 +271,19 @@ static int isis_link_update_adj_hook(struct isis_adjacency *adj)
 		SET_SUBTLV(circuit->ext, EXT_NEIGH_ADDR);
 		zlog_debug("  |- New Extended subTLVs status 0x%x", circuit->ext->status);
 	}
+
+	/* and IPv6 */
+	if (adj->ipv6_address_count > 0) {
+		zlog_debug("TE(%s): Update MPLS-TE link parameters with Remote IP addr %s for interface %s",
+			  circuit->area->area_tag,
+			  inet_ntop(AF_INET6, &adj->ipv6_addresses[0], buf, PREFIX2STR_BUFFER),
+			  circuit->interface->name);
+		IPV6_ADDR_COPY(&circuit->ext->neigh_addr6,
+			       &adj->ipv6_addresses[0]);
+		SET_SUBTLV(circuit->ext, EXT_NEIGH_ADDR6);
+		zlog_debug("  |- New Extended subTLVs status 0x%x", circuit->ext->status);
+	}
+
 
 	return 0;
 }
@@ -312,13 +351,14 @@ DEFUN (show_isis_mpls_te_router,
 }
 
 static void show_ext_sub(struct vty *vty, char *name,
-			     struct isis_ext_subtlvs *ext)
+			 struct isis_ext_subtlvs *ext)
 {
 	struct sbuf buf;
+	char ibuf[PREFIX2STR_BUFFER];
 
 	sbuf_init(&buf, NULL, 0);
 
-	if (!IS_MPLS_TE(ext))
+	if (!ext || ext->status == EXT_DISABLE)
 		return;
 
 	vty_out(vty, "-- MPLS-TE link parameters for %s --\n", name);
@@ -340,6 +380,14 @@ static void show_ext_sub(struct vty *vty, char *name,
 	if IS_SUBTLV(ext, EXT_NEIGH_ADDR)
 		sbuf_push(&buf, 4, "Remote Interface IP Address(es): %s\n",
 			  inet_ntoa(ext->neigh_addr));
+	if IS_SUBTLV(ext, EXT_LOCAL_ADDR6)
+		sbuf_push(&buf, 4, "Local Interface IPv6 Address(es): %s\n",
+			  inet_ntop(AF_INET6, &ext->local_addr6, ibuf,
+				    PREFIX2STR_BUFFER));
+	if IS_SUBTLV(ext, EXT_NEIGH_ADDR6)
+		sbuf_push(&buf, 4, "Remote Interface IPv6 Address(es): %s\n",
+			  inet_ntop(AF_INET6, &ext->local_addr6, ibuf,
+				    PREFIX2STR_BUFFER));
 	if IS_SUBTLV(ext, EXT_MAX_BW)
 		sbuf_push(&buf, 4, "Maximum Bandwidth: %g (Bytes/sec)\n",
 			  ext->max_bw);

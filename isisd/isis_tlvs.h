@@ -176,6 +176,7 @@ struct isis_adj_sid;
 struct isis_adj_sid {
 	struct isis_adj_sid *next;
 
+	uint8_t family;
 	uint8_t flags;
 	uint8_t weight;
 	uint32_t sid;
@@ -185,6 +186,7 @@ struct isis_lan_adj_sid;
 struct isis_lan_adj_sid {
 	struct isis_lan_adj_sid *next;
 
+	uint8_t family;
 	uint8_t flags;
 	uint8_t weight;
 	uint8_t neighbor_id[ISIS_SYS_ID_LEN];
@@ -377,13 +379,15 @@ enum isis_tlv_type {
 	/* subTLVs code point */
 	ISIS_SUBTLV_IPV6_SOURCE_PREFIX = 22,
 
-	/* RFC 5305 */
+	/* RFC 5305 & RFC 6119 */
 	ISIS_SUBTLV_ADMIN_GRP = 3,
 	ISIS_SUBTLV_LOCAL_IPADDR = 6,
 	ISIS_SUBTLV_RMT_IPADDR = 8,
 	ISIS_SUBTLV_MAX_BW = 9,
 	ISIS_SUBTLV_MAX_RSV_BW = 10,
 	ISIS_SUBTLV_UNRSV_BW = 11,
+	ISIS_SUBTLV_LOCAL_IPADDR6 = 12,
+	ISIS_SUBTLV_RMT_IPADDR6 = 13,
 	ISIS_SUBTLV_TE_METRIC = 18,
 
 	/* RFC 5307 */
@@ -420,6 +424,7 @@ enum ext_subtlv_size {
 
 	ISIS_SUBTLV_UNRSV_BW_SIZE = 32,
 	ISIS_SUBTLV_TE_METRIC_SIZE = 3,
+	ISIS_SUBTLV_IPV6_ADDR_SIZE = 16,
 
 	/* draft-isis-segment-routing-extension-25 */
 	ISIS_SUBTLV_SID_LABEL_SIZE = 3,
@@ -443,25 +448,28 @@ enum ext_subtlv_size {
 #define UNSET_SUBTLV(s, t) (s->status) &= ~(t)
 #define IS_SUBTLV(s, t) (s->status & t)
 
+#define EXT_DISABLE		0x000000
 #define EXT_ADM_GRP		0x000001
 #define EXT_LLRI		0x000002
 #define EXT_LOCAL_ADDR		0x000004
 #define EXT_NEIGH_ADDR		0x000008
-#define EXT_MAX_BW		0x000010
-#define EXT_MAX_RSV_BW		0x000020
-#define EXT_UNRSV_BW		0x000040
-#define EXT_TE_METRIC		0x000080
-#define EXT_RMT_AS		0x000100
-#define EXT_RMT_IP		0x000200
-#define EXT_ADJ_SID		0x000400
-#define EXT_LAN_ADJ_SID		0x000800
-#define EXT_DELAY		0x001000
-#define EXT_MM_DELAY		0x002000
-#define EXT_DELAY_VAR		0x004000
-#define EXT_PKT_LOSS		0x008000
-#define EXT_RES_BW		0x001000
-#define EXT_AVA_BW		0x002000
-#define EXT_USE_BW		0x004000
+#define EXT_LOCAL_ADDR6		0x000010
+#define EXT_NEIGH_ADDR6		0x000020
+#define EXT_MAX_BW		0x000040
+#define EXT_MAX_RSV_BW		0x000080
+#define EXT_UNRSV_BW		0x000100
+#define EXT_TE_METRIC		0x000200
+#define EXT_RMT_AS		0x000400
+#define EXT_RMT_IP		0x000800
+#define EXT_ADJ_SID		0x001000
+#define EXT_LAN_ADJ_SID		0x002000
+#define EXT_DELAY		0x004000
+#define EXT_MM_DELAY		0x008000
+#define EXT_DELAY_VAR		0x010000
+#define EXT_PKT_LOSS		0x020000
+#define EXT_RES_BW		0x040000
+#define EXT_AVA_BW		0x080000
+#define EXT_USE_BW		0x100000
 
 /*
  * This structure groups all Extended IS Reachability subTLVs.
@@ -487,6 +495,8 @@ struct isis_ext_subtlvs {
 	uint32_t remote_llri;
 	struct in_addr local_addr; /* Local IP Address - RFC 5305 */
 	struct in_addr neigh_addr; /* Neighbor IP Address - RFC 5305 */
+	struct in6_addr local_addr6; /* Local IPv6 Address - RFC 6119 */
+	struct in6_addr neigh_addr6; /* Neighbor IPv6 Address - RFC 6119 */
 	float max_bw; /* Maximum Bandwidth - RFC 5305 */
 	float max_rsv_bw; /* Maximum Reservable Bandwidth - RFC 5305 */
 	float unrsv_bw[8]; /* Unreserved Bandwidth - RFC 5305 */

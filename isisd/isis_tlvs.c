@@ -127,7 +127,7 @@ struct isis_ext_subtlvs *isis_alloc_ext_subtlvs(void)
 
 
 static struct isis_ext_subtlvs *
-copy_item_ext_subtlvs(struct isis_ext_subtlvs *exts)
+copy_item_ext_subtlvs(struct isis_ext_subtlvs *exts, int16_t mtid)
 {
 	struct isis_ext_subtlvs *rv = XCALLOC(MTYPE_ISIS_SUBTLV, sizeof(*rv));
 	struct isis_adj_sid *adj;
@@ -137,34 +137,58 @@ copy_item_ext_subtlvs(struct isis_ext_subtlvs *exts)
 	init_item_list(&rv->adj_sid);
 	init_item_list(&rv->lan_sid);
 
-	/* Copy Adj SID and LAN Adj SID list if needed */
+	UNSET_SUBTLV(rv, EXT_ADJ_SID);
+	UNSET_SUBTLV(rv, EXT_LAN_ADJ_SID);
+
+	/* Copy Adj SID and LAN Adj SID list for IPv4 if needed */
 	for (adj = (struct isis_adj_sid *)exts->adj_sid.head; adj != NULL;
 	     adj = adj->next) {
+		if ((mtid != -1)
+		    && (((mtid == ISIS_MT_IPV4_UNICAST)
+			 && (adj->family != AF_INET))
+			|| ((mtid == ISIS_MT_IPV6_UNICAST)
+			    && (adj->family != AF_INET6))))
+			continue;
+
 		struct isis_adj_sid *new;
 		new = XCALLOC(MTYPE_ISIS_SR, sizeof(struct isis_adj_sid));
+		new->family = adj->family;
 		new->flags = adj->flags;
 		new->weight = adj->weight;
 		new->sid = adj->sid;
 		append_item(&rv->adj_sid, (struct isis_item *)new);
+		SET_SUBTLV(rv, EXT_ADJ_SID);
 	}
 
 	for (lan = (struct isis_lan_adj_sid *)exts->lan_sid.head; lan != NULL;
 	     lan = lan->next) {
+		if ((mtid != -1)
+		    && (((mtid == ISIS_MT_IPV4_UNICAST)
+			 && (lan->family != AF_INET))
+			|| ((mtid == ISIS_MT_IPV6_UNICAST)
+			    && (lan->family != AF_INET6))))
+			continue;
+
 		struct isis_lan_adj_sid *new;
 		new = XCALLOC(MTYPE_ISIS_SR, sizeof(struct isis_lan_adj_sid));
+		new->family = lan->family;
 		new->flags = lan->flags;
 		new->weight = lan->weight;
 		memcpy(new->neighbor_id, lan->neighbor_id, 6);
 		new->sid = lan->sid;
 		append_item(&rv->lan_sid, (struct isis_item *)new);
+		SET_SUBTLV(rv, EXT_LAN_ADJ_SID);
 	}
 
  	return rv;
 }
 
 static void format_item_ext_subtlvs(struct isis_ext_subtlvs *exts,
-				    struct sbuf *buf, int indent)
+				    struct sbuf *buf, int indent,
+				    uint16_t mtid)
 {
+
+	char ibuf[PREFIX2STR_BUFFER];
 
 	if IS_SUBTLV(exts, EXT_ADM_GRP)
 		sbuf_push(buf, indent, "Administrative Group: 0x%" PRIx32 "\n",
@@ -181,6 +205,14 @@ static void format_item_ext_subtlvs(struct isis_ext_subtlvs *exts,
 	if IS_SUBTLV(exts, EXT_NEIGH_ADDR)
 		sbuf_push(buf, indent, "Remote Interface IP Address(es): %s\n",
 			  inet_ntoa(exts->neigh_addr));
+	if IS_SUBTLV(exts, EXT_LOCAL_ADDR6)
+		sbuf_push(buf, indent, "Local Interface IPv6 Address(es): %s\n",
+			inet_ntop(AF_INET6, &exts->local_addr6, ibuf,
+				  PREFIX2STR_BUFFER));
+	if IS_SUBTLV(exts, EXT_NEIGH_ADDR6)
+		sbuf_push(buf, indent, "Remote Interface IPv6 Address(es): %s\n",
+			inet_ntop(AF_INET6, &exts->local_addr6, ibuf,
+				  PREFIX2STR_BUFFER));
 	if IS_SUBTLV(exts, EXT_MAX_BW)
 		sbuf_push(buf, indent, "Maximum Bandwidth: %g (Bytes/sec)\n",
 			  exts->max_bw);
@@ -213,6 +245,11 @@ static void format_item_ext_subtlvs(struct isis_ext_subtlvs *exts,
 		struct isis_adj_sid *adj;
 		for (adj = (struct isis_adj_sid *)exts->adj_sid.head; adj;
 		     adj = adj->next) {
+			if (((mtid == ISIS_MT_IPV4_UNICAST)
+			     && (adj->family != AF_INET))
+			    || ((mtid == ISIS_MT_IPV6_UNICAST)
+				&& (adj->family != AF_INET6)))
+				continue;
 			sbuf_push(
 				buf, indent,
 				"Adjacency-SID: %" PRIu32 ", Weight: %" PRIu8
@@ -237,6 +274,11 @@ static void format_item_ext_subtlvs(struct isis_ext_subtlvs *exts,
 		struct isis_lan_adj_sid *lan;
 		for (lan = (struct isis_lan_adj_sid *)exts->lan_sid.head;
 		     lan; lan = lan->next) {
+			if (((mtid == ISIS_MT_IPV4_UNICAST)
+			     && (lan->family != AF_INET))
+			    || ((mtid == ISIS_MT_IPV6_UNICAST)
+				&& (lan->family != AF_INET6)))
+				continue;
 			sbuf_push(buf, indent,
 				  "Lan-Adjacency-SID: %" PRIu32
 				  ", Weight: %" PRIu8
@@ -343,6 +385,16 @@ static int pack_item_ext_subtlvs(struct isis_ext_subtlvs *exts,
 		stream_putc(s, ISIS_SUBTLV_RMT_IPADDR);
 		stream_putc(s, ISIS_SUBTLV_DEF_SIZE);
 		stream_put(s, &exts->neigh_addr.s_addr, 4);
+	}
+	if IS_SUBTLV(exts, EXT_LOCAL_ADDR6) {
+		stream_putc(s, ISIS_SUBTLV_LOCAL_IPADDR6);
+		stream_putc(s, ISIS_SUBTLV_IPV6_ADDR_SIZE);
+		stream_put(s, &exts->local_addr6, 16);
+	}
+	if IS_SUBTLV(exts, EXT_NEIGH_ADDR6) {
+		stream_putc(s, ISIS_SUBTLV_RMT_IPADDR6);
+		stream_putc(s, ISIS_SUBTLV_IPV6_ADDR_SIZE);
+		stream_put(s, &exts->neigh_addr6, 16);
 	}
 	if IS_SUBTLV(exts, EXT_MAX_BW) {
 		stream_putc(s, ISIS_SUBTLV_MAX_BW);
@@ -505,10 +557,28 @@ static int unpack_item_ext_subtlvs(uint16_t mtid, uint8_t len, struct stream *s,
 		case ISIS_SUBTLV_RMT_IPADDR:
 			if (subtlv_len != ISIS_SUBTLV_DEF_SIZE) {
 				sbuf_push(log, indent,
-					  "TLV size does not match expected size for Remote Interface address!\n");
+					  "TLV size does not match expected size for Remote IP address!\n");
 			} else {
 				stream_get(&exts->neigh_addr.s_addr, s, 4);
 				SET_SUBTLV(exts, EXT_NEIGH_ADDR);
+			}
+			break;
+		case ISIS_SUBTLV_LOCAL_IPADDR6:
+			if (subtlv_len != ISIS_SUBTLV_IPV6_ADDR_SIZE) {
+				sbuf_push(log, indent,
+					  "TLV size does not match expected size for Local IPv6 address!\n");
+			} else {
+				stream_get(&exts->local_addr6, s, 16);
+				SET_SUBTLV(exts, EXT_LOCAL_ADDR6);
+			}
+			break;
+		case ISIS_SUBTLV_RMT_IPADDR6:
+			if (subtlv_len != ISIS_SUBTLV_IPV6_ADDR_SIZE) {
+				sbuf_push(log, indent,
+					  "TLV size does not match expected size for Remote IPv6 address!\n");
+			} else {
+				stream_get(&exts->neigh_addr6, s, 16);
+				SET_SUBTLV(exts, EXT_NEIGH_ADDR6);
 			}
 			break;
 		case ISIS_SUBTLV_MAX_BW:
@@ -649,6 +719,10 @@ static int unpack_item_ext_subtlvs(uint16_t mtid, uint8_t len, struct stream *s,
 				} else {
 					adj->sid = stream_getl(s);
 				}
+				if (mtid == ISIS_MT_IPV4_UNICAST)
+					adj->family = AF_INET;
+				if (mtid == ISIS_MT_IPV6_UNICAST)
+					adj->family = AF_INET6;
 				append_item(&exts->adj_sid, (struct isis_item *)adj);
 				SET_SUBTLV(exts, EXT_ADJ_SID);
 			}
@@ -671,6 +745,10 @@ static int unpack_item_ext_subtlvs(uint16_t mtid, uint8_t len, struct stream *s,
 				} else {
 					lan->sid = stream_getl(s);
 				}
+				if (mtid == ISIS_MT_IPV4_UNICAST)
+					lan->family = AF_INET;
+				if (mtid == ISIS_MT_IPV6_UNICAST)
+					lan->family = AF_INET6;
 				append_item(&exts->lan_sid, (struct isis_item *)lan);
 				SET_SUBTLV(exts, EXT_LAN_ADJ_SID);
 			}
@@ -1284,7 +1362,7 @@ static struct isis_item *copy_item_extended_reach(struct isis_item *i)
 	rv->metric = r->metric;
 
 	if (r->subtlvs)
-		rv->subtlvs = copy_item_ext_subtlvs(r->subtlvs);
+		rv->subtlvs = copy_item_ext_subtlvs(r->subtlvs, -1);
 
 	return (struct isis_item *)rv;
 }
@@ -1302,7 +1380,7 @@ static void format_item_extended_reach(uint16_t mtid, struct isis_item *i,
 	sbuf_push(buf, 0, "\n");
 
 	if (r->subtlvs)
-		format_item_ext_subtlvs(r->subtlvs, buf, indent + 2);
+		format_item_ext_subtlvs(r->subtlvs, buf, indent + 2, mtid);
 }
 
 static void free_item_extended_reach(struct isis_item *i)
@@ -2556,7 +2634,7 @@ static int pack_tlv_router_cap(const struct isis_router_cap *router_cap,
 		return 1;
 
 	stream_putc(s, ISIS_TLV_ROUTER_CAPABILITY);
-	/* Real lenght will be adjust later */
+	/* Real length will be adjust later */
 	len_pos = stream_get_endp(s);
 	stream_putc(s, tlv_len);
 	stream_putl(s, router_cap->router_id.s_addr);
@@ -4549,7 +4627,7 @@ void isis_tlvs_add_extended_reach(struct isis_tlvs *tlvs, uint16_t mtid,
 	memcpy(r->id, id, sizeof(r->id));
 	r->metric = metric;
 	if (exts)
-		r->subtlvs = copy_item_ext_subtlvs(exts);
+		r->subtlvs = copy_item_ext_subtlvs(exts, mtid);
 
 	struct isis_item_list *l;
 	if (mtid == ISIS_MT_IPV4_UNICAST)
