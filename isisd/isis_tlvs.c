@@ -180,7 +180,7 @@ copy_item_ext_subtlvs(struct isis_ext_subtlvs *exts, int16_t mtid)
 		SET_SUBTLV(rv, EXT_LAN_ADJ_SID);
 	}
 
- 	return rv;
+	return rv;
 }
 
 static void format_item_ext_subtlvs(struct isis_ext_subtlvs *exts,
@@ -4555,9 +4555,7 @@ void isis_tlvs_add_extended_ip_reach(struct isis_tlvs *tlvs,
 		struct isis_prefix_sid *psid =
 			XCALLOC(MTYPE_ISIS_SUBTLV, sizeof(*psid));
 
-		psid->flags = srp->flags;
-		psid->algorithm = SR_ALGORITHM_SPF;
-		psid->value = srp->sid;
+		memcpy(psid, &srp->sid, sizeof(struct isis_prefix_sid));
 
 		r->subtlvs = isis_alloc_subtlvs(ISIS_CONTEXT_SUBTLV_IP_REACH);
 		append_item(&r->subtlvs->prefix_sids, (struct isis_item *)psid);
@@ -4578,9 +4576,7 @@ void isis_tlvs_add_ipv6_reach(struct isis_tlvs *tlvs, uint16_t mtid,
 		struct isis_prefix_sid *psid =
 			XCALLOC(MTYPE_ISIS_SUBTLV, sizeof(*psid));
 
-		psid->flags = srp->flags;
-		psid->algorithm = SR_ALGORITHM_SPF;
-		psid->value = srp->sid;
+		memcpy(psid, &srp->sid, sizeof(struct isis_prefix_sid));
 
 		r->subtlvs = isis_alloc_subtlvs(ISIS_CONTEXT_SUBTLV_IP_REACH);
 		append_item(&r->subtlvs->prefix_sids, (struct isis_item *)psid);

@@ -29,7 +29,8 @@ enum isis_log_refs {
 	EC_ISIS_SR_INVALID_DB,
 	EC_ISIS_SR_NODE_CREATE,
 	EC_ISIS_SR_NODE_DELETE,
-	EC_ISIS_SR_INVALID_LSP_ID
+	EC_ISIS_SR_INVALID_LSP_ID,
+	EC_ISIS_SR_LABEL_MANAGER
 };
 
 extern void isis_error_init(void);

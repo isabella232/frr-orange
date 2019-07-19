@@ -457,6 +457,9 @@ static void _isis_route_verify_table(struct isis_area *area,
 
 		isis_zebra_route_update(dst_p, src_p, rinfo);
 
+//		if (IS_SR(area))
+//			isis_sr_prefix_update(area, dst_p);
+
 		if (CHECK_FLAG(rinfo->flag, ISIS_ROUTE_FLAG_ACTIVE))
 			continue;
 

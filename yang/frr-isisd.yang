@@ -759,7 +759,7 @@ module frr-isisd {
             "Prefix SID configuration.";
           list prefix-sid {
             key "prefix";
-            unique "sid-index";
+            unique "sid-value-type sid-value";
             description
               "List of prefix SID mapped to IPv4/IPv6
                local prefixes.";
@@ -768,22 +768,46 @@ module frr-isisd {
               description
                 "Connected prefix sid.";
             }
-            leaf sid-index {
+            leaf sid-value-type {
+              type enumeration {
+                enum "index" {
+                  value 0;
+                  description
+                    "The value will be interpreted as an index.";
+                }
+                enum "absolute" {
+                  value 1;
+                  description
+                    "The value will become interpreted as an absolute
+                     value.";
+                }
+              }
+              default "index";
+              description
+                "This leaf defines how value must be interpreted.";
+            }
+            leaf sid-value {
               type uint32;
               mandatory true;
               description
-                "SID index associated with prefix.";
+                "Value associated with prefix. The value must be
+                 interpreted in the context of sid-value-type.";
             }
             leaf last-hop-behavior {
               type enumeration {
-                enum "no-php" {
+                enum "explicit-null" {
                   value 0;
+                  description
+                    "Use explicit-null for the SID.";
+                }
+                enum "no-php" {
+                  value 1;
                   description
                     "Do not use Penultimate Hop Popping (PHP)
                      for the SID.";
                 }
                 enum "php" {
-                  value 1;
+                  value 2;
                   description
                     "Use PHP for the SID.";
                 }

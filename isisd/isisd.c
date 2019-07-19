@@ -68,6 +68,7 @@ DEFINE_QOBJ_TYPE(isis_area)
  * Prototypes.
  */
 int isis_area_get(struct vty *, const char *);
+int isis_area_destroy(const char *);
 int area_net_title(struct vty *, const char *);
 int area_clear_net_title(struct vty *, const char *);
 int show_isis_interface_common(struct vty *, const char *ifname, char);
@@ -279,7 +280,7 @@ int isis_area_destroy(const char *area_tag)
 	isis_area_invalidate_routes(area, area->is_type);
 	isis_area_verify_routes(area);
 
-	isis_sr_term(area);
+	isis_sr_stop(area);
 
 	spftree_area_del(area);
 

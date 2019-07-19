@@ -1421,21 +1421,35 @@ void cli_show_isis_node_msd(struct vty *vty, struct lyd_node *dnode,
  */
 DEFPY (isis_sr_prefix_sid,
        isis_sr_prefix_sid_cmd,
-       "segment-routing prefix <A.B.C.D/M|X:X::X:X/M>$prefix index (0-65535)$index [no-php-flag]$no_php",
+       "segment-routing prefix\
+          <A.B.C.D/M|X:X::X:X/M>$prefix\
+	  <absolute$sid_type (16000-1048575)$sid_value|index$sid_type (0-65535)$sid_value>\
+	  [<no-php-flag|explicit-null>$lh_behavior]",
        SR_STR
        "Prefix SID\n"
        "IPv4 Prefix\n"
        "IPv6 Prefix\n"
-       "SID index for this prefix in decimal (0-65535)\n"
-       "Index value inside SRGB (lower_bound < index < upper_bound)\n"
-       "Don't request Penultimate Hop Popping (PHP)\n")
+       "Specify the absolute value of Prefix Segement ID\n"
+       "The Prefix Segment ID value\n"
+       "Specify the index of Prefix Segement ID\n"
+       "The Prefix Segment ID index\n"
+       "Don't request Penultimate Hop Popping (PHP)\n"
+       "Upstream neighbor must replace prefix-sid with explicit null label\n")
 {
-
 	nb_cli_enqueue_change(vty, ".", NB_OP_CREATE, NULL);
-	nb_cli_enqueue_change(vty, "./sid-index", NB_OP_MODIFY, index_str);
-	if (no_php)
+	nb_cli_enqueue_change(vty, "./sid-value-type", NB_OP_MODIFY, sid_type);
+	nb_cli_enqueue_change(vty, "./sid-value", NB_OP_MODIFY, sid_value_str);
+	if (lh_behavior) {
+		const char *value;
+
+		if (strmatch(lh_behavior, "no-php-flag"))
+			value = "no-php";
+		else
+			value = "explicit-null";
+
 		nb_cli_enqueue_change(vty, "./last-hop-behavior", NB_OP_MODIFY,
-				      "no-php");
+				      value);
+	}
 
 	return nb_cli_apply_changes(
 		vty, "./segment-routing/prefix-sid-map/prefix-sid[prefix='%s']",
@@ -1444,15 +1458,19 @@ DEFPY (isis_sr_prefix_sid,
 
 DEFPY (no_isis_sr_prefix_sid,
        no_isis_sr_prefix_sid_cmd,
-       "no segment-routing prefix <A.B.C.D/M|X:X::X:X/M>$prefix [index (0-65535) [no-php-flag]]",
+       "no segment-routing prefix <A.B.C.D/M|X:X::X:X/M>$prefix\
+         [<absolute$sid_type (16000-1048575)|index (0-65535)> [<no-php-flag|explicit-null>]]",
        NO_STR
        SR_STR
        "Prefix SID\n"
        "IPv4 Prefix\n"
        "IPv6 Prefix\n"
-       "SID index for this prefix in decimal (0-65535)\n"
-       "Index value inside SRGB (lower_bound < index < upper_bound)\n"
-       "Don't request Penultimate Hop Popping (PHP)\n")
+       "Specify the absolute value of Prefix Segement ID\n"
+       "The Prefix Segment ID value\n"
+       "Specify the index of Prefix Segement ID\n"
+       "The Prefix Segment ID index\n"
+       "Don't request Penultimate Hop Popping (PHP)\n"
+       "Upstream neighbor must replace prefix-sid with explicit null label\n")
 {
 	nb_cli_enqueue_change(vty, ".", NB_OP_DESTROY, NULL);
 
@@ -1464,13 +1482,26 @@ DEFPY (no_isis_sr_prefix_sid,
 void cli_show_isis_prefix_sid(struct vty *vty, struct lyd_node *dnode,
 			      bool show_defaults)
 {
-	vty_out(vty, " segment-routing prefix %s index %s",
-		yang_dnode_get_string(dnode, "./prefix"),
-		yang_dnode_get_string(dnode, "./sid-index"));
-	if (strmatch(yang_dnode_get_string(dnode, "./last-hop-behavior"),
-		     "no-php"))
-		vty_out(vty, " no-php-flag");
+	const char *prefix;
+	const char *lh_behavior;
+	const char *sid_value_type;
+	const char *sid_value;
 
+	prefix = yang_dnode_get_string(dnode, "./prefix");
+	lh_behavior = yang_dnode_get_string(dnode, "./last-hop-behavior");
+	sid_value_type = yang_dnode_get_string(dnode, "./sid-value-type");
+	sid_value = yang_dnode_get_string(dnode, "./sid-value");
+
+	vty_out(vty, " segment-routing prefix %s", prefix);
+	if (strmatch(sid_value_type, "absolute"))
+		vty_out(vty, " absolute");
+	else
+		vty_out(vty, " index");
+	vty_out(vty, " %s", sid_value);
+	if (strmatch(lh_behavior, "no-php"))
+		vty_out(vty, " no-php-flag");
+	else if (strmatch(lh_behavior, "explicit-null"))
+		vty_out(vty, " explicit-null");
 	vty_out(vty, "\n");
 }
 

@@ -82,7 +82,9 @@ struct zebra_privs_t isisd_privs = {
 	.cap_num_i = 0};
 
 /* isisd options */
-struct option longopts[] = {{0}};
+static const struct option longopts[] = {
+	{"int_num", required_argument, NULL, 'I'},
+	{0}};
 
 /* Master of threads. */
 struct thread_master *master;
@@ -193,13 +195,16 @@ FRR_DAEMON_INFO(isisd, ISIS, .vty_port = ISISD_VTY_PORT,
 int main(int argc, char **argv, char **envp)
 {
 	int opt;
+	int instance = 1;
 
 #ifdef FABRICD
 	frr_preinit(&fabricd_di, argc, argv);
 #else
 	frr_preinit(&isisd_di, argc, argv);
 #endif
-	frr_opt_add("", longopts, "");
+	frr_opt_add(
+		"I:", longopts,
+		"  -I, --int_num      Set instance number (label-manager)\n");
 
 	/* Command line argument treatment. */
 	while (1) {
@@ -210,6 +215,12 @@ int main(int argc, char **argv, char **envp)
 
 		switch (opt) {
 		case 0:
+			break;
+		case 'I':
+			instance = atoi(optarg);
+			if ((instance < 0) && (instance > (unsigned short)-1))
+				zlog_err("Instance %i out of range (1..%u)",
+					 instance, (unsigned short)-1);
 			break;
 		default:
 			frr_help_exit(1);
@@ -243,9 +254,9 @@ int main(int argc, char **argv, char **envp)
 	mt_init();
 
 	/* create the global 'isis' instance */
-	isis_new(1);
+	isis_new(instance);
 
-	isis_zebra_init(master);
+	isis_zebra_init(master, instance);
 	isis_bfd_init();
 	fabricd_init();
 

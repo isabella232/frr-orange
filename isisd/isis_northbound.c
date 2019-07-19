@@ -1656,7 +1656,7 @@ static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_create(
 	area = nb_running_get_entry(dnode, NULL, true);
 	yang_dnode_get_prefix(&prefix, dnode, "./prefix");
 
-	srp = isis_sr_prefix_sid_add(area, &prefix);
+	srp = isis_sr_prefix_add(area, &prefix);
 	if (srp != NULL) {
 		nb_running_set_entry(dnode, srp);
 		return NB_OK;
@@ -1679,7 +1679,7 @@ static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy(
 
 	srp = nb_running_unset_entry(dnode);
 	area = srp->srn->area;
-	isis_sr_prefix_sid_del(srp);
+	isis_sr_prefix_del(srp);
 	lsp_regenerate_schedule(area, area->is_type, 0);
 
 	return NB_OK;
@@ -1706,10 +1706,41 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish(
 
 /*
  * XPath:
- * /frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-index
+ * /frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-value-type
  */
 static int
-isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify(
+isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_value_type_modify(
+	enum nb_event event, const struct lyd_node *dnode,
+	union nb_resource *resource)
+{
+	struct sr_prefix *srp;
+	int sid_value_type;
+
+	if (event != NB_EV_APPLY)
+		return NB_OK;
+
+	srp = nb_running_get_entry(dnode, NULL, true);
+	sid_value_type = yang_dnode_get_enum(dnode, NULL);
+	switch (sid_value_type) {
+	case SR_SID_VALUE_TYPE_INDEX:
+		UNSET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE);
+		UNSET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_LOCAL);
+		break;
+	case SR_SID_VALUE_TYPE_ABSOLUTE:
+		SET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE);
+		SET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_LOCAL);
+		break;
+	}
+
+	return NB_OK;
+}
+
+/*
+ * XPath:
+ * /frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-value
+ */
+static int
+isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_value_modify(
 	enum nb_event event, const struct lyd_node *dnode,
 	union nb_resource *resource)
 {
@@ -1721,18 +1752,18 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify(
 
 	srp = nb_running_get_entry(dnode, NULL, true);
 	sid = yang_dnode_get_uint32(dnode, NULL);
-	if (srp) {
-		if (sid > srp->srn->area->srdb.upper_bound - 1) {
-			flog_warn(
-				EC_LIB_NB_CB_CONFIG_VALIDATE,
-				"Index is out of SRGB range");
-			isis_sr_prefix_sid_del(srp);
-			return NB_ERR_VALIDATION;
-		} else {
-			srp->sid = sid;
-			srp->type = PREF_SID;
-		}
+
+	/* Verify that SID index is less than SRGB upper bound */
+	if (!CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE)
+	    && (sid > srp->srn->area->srdb.upper_bound - 1)) {
+		flog_warn(EC_LIB_NB_CB_CONFIG_VALIDATE,
+			  "Index is out of SRGB range");
+		isis_sr_prefix_del(srp);
+		return NB_ERR_VALIDATION;
+	} else {
+		srp->sid.value = sid;
 	}
+
 	return NB_OK;
 }
 
@@ -1752,17 +1783,19 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_last_hop_behavior_modify
 		return NB_OK;
 
 	srp = nb_running_get_entry(dnode, NULL, true);
-	if (srp == NULL)
-		return NB_OK;
-
 	last_hop_behavior = yang_dnode_get_enum(dnode, NULL);
-	/* TODO: use constants. */
 	switch (last_hop_behavior) {
-	case 0:
-		SET_FLAG(srp->flags, ISIS_PREFIX_SID_NO_PHP);
+	case SR_LAST_HOP_BEHAVIOR_EXP_NULL:
+		SET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP);
+		SET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_EXPLICIT_NULL);
 		break;
-	case 1:
-		UNSET_FLAG(srp->flags, ISIS_PREFIX_SID_NO_PHP);
+	case SR_LAST_HOP_BEHAVIOR_NO_PHP:
+		SET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP);
+		UNSET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_EXPLICIT_NULL);
+		break;
+	case SR_LAST_HOP_BEHAVIOR_PHP:
+		UNSET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP);
+		UNSET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_EXPLICIT_NULL);
 		break;
 	}
 
@@ -3507,10 +3540,16 @@ const struct frr_yang_module_info frr_isisd_info = {
 			},
 		},
 		{
-			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-index",
+			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-value-type",
 			.cbs = {
-				.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_index_modify,
+				.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_value_type_modify,
 			},
+		},
+		{
+			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/sid-value",
+			.cbs = {
+				.modify = isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_value_modify,
+			}
 		},
 		{
 			.xpath = "/frr-isisd:isis/instance/segment-routing/prefix-sid-map/prefix-sid/last-hop-behavior",

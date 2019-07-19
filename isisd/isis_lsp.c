@@ -776,8 +776,7 @@ static void lsp_build_ext_reach_ipv4(struct isis_lsp *lsp,
 		if (area->newmetric) {
 			struct sr_prefix *srp;
 
-			srp = isis_sr_prefix_sid_find(area,
-						      (struct prefix *)ipv4);
+			srp = isis_sr_prefix_find(area, (struct prefix *)ipv4);
 
 			isis_tlvs_add_extended_ip_reach(lsp->tlvs, ipv4,
 							metric, srp);
@@ -809,7 +808,7 @@ static void lsp_build_ext_reach_ipv6(struct isis_lsp *lsp,
 
 		if (!src_p || !src_p->prefixlen) {
 			struct sr_prefix *srp;
-			srp = isis_sr_prefix_sid_find(area, (struct prefix *)p);
+			srp = isis_sr_prefix_find(area, (struct prefix *)p);
 
 			isis_tlvs_add_ipv6_reach(lsp->tlvs,
 						 isis_area_ipv6_topology(area),
@@ -1029,12 +1028,8 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 						area->area_tag,
 						prefix2str(ipv4, buf,
 							   sizeof(buf)));
-					srp = isis_sr_prefix_sid_find(
-					                        area, (struct prefix *)ipv4);
-					if (srp)
-						lsp_debug("   with Prefix-SID: %d", srp->sid);
-					else
-						lsp_debug("   without Prefix SID");
+					srp = isis_sr_prefix_find(
+						area, (struct prefix *)ipv4);
 					isis_tlvs_add_extended_ip_reach(
 						lsp->tlvs, ipv4, metric, srp);
 				}
@@ -1052,12 +1047,8 @@ static void lsp_build(struct isis_lsp *lsp, struct isis_area *area)
 					"ISIS (%s): Adding IPv6 reachability for %s",
 					area->area_tag,
 					prefix2str(ipv6, buf, sizeof(buf)));
-				srp = isis_sr_prefix_sid_find(
-				                    area, (struct prefix *)ipv6);
-				if (srp)
-					lsp_debug("   with Prefix-SID: %d", srp->sid);
-				else
-					lsp_debug("   without Prefix SID");
+				srp = isis_sr_prefix_find(
+					area, (struct prefix *)ipv6);
 				isis_tlvs_add_ipv6_reach(
 					lsp->tlvs,
 					isis_area_ipv6_topology(area), ipv6,

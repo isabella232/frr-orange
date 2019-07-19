@@ -92,7 +92,7 @@ void isis_link_params_update(struct isis_circuit *circuit,
 	/* Check if MPLS TE Circuit context has not been already created */
 	if (circuit->ext == NULL) {
 		circuit->ext = isis_alloc_ext_subtlvs();
-		zlog_debug("  |- Allocated new extended subTLVs for interface %s",
+		zlog_debug("  |- Allocated new Ext-subTLVs for interface %s",
 			   ifp->name);
 	}
 
@@ -133,8 +133,9 @@ void isis_link_params_update(struct isis_circuit *circuit,
 		/* If known, register local IPv6 addr from ip_addr list */
 		if (circuit->ipv6_non_link != NULL
 		    && listcount(circuit->ipv6_non_link) != 0) {
-			addr6 = (struct prefix_ipv6 *)listgetdata((
-				struct listnode *)listhead(circuit->ipv6_non_link));
+			addr6 = (struct prefix_ipv6 *)listgetdata(
+				(struct listnode *)listhead(
+					circuit->ipv6_non_link));
 			IPV6_ADDR_COPY(&ext->local_addr6, &addr6->prefix);
 			SET_SUBTLV(ext, EXT_LOCAL_ADDR6);
 		} else
@@ -254,7 +255,6 @@ static int isis_link_update_adj_hook(struct isis_adjacency *adj)
 {
 
 	struct isis_circuit *circuit = adj->circuit;
-	char buf[PREFIX2STR_BUFFER];
 
 	/* Update MPLS TE Remote IP address parameter if possible */
 	if (!IS_MPLS_TE(circuit->area->mta) || !IS_EXT_TE(circuit->ext))
@@ -262,28 +262,17 @@ static int isis_link_update_adj_hook(struct isis_adjacency *adj)
 
 	/* IPv4 first */
 	if (adj->ipv4_address_count > 0) {
-		zlog_debug("TE(%s): Update MPLS-TE link parameters with Remote IP addr %s for interface %s",
-			  circuit->area->area_tag,
-			  inet_ntoa(adj->ipv4_addresses[0]),
-			  circuit->interface->name);
 		IPV4_ADDR_COPY(&circuit->ext->neigh_addr,
 			       &adj->ipv4_addresses[0]);
 		SET_SUBTLV(circuit->ext, EXT_NEIGH_ADDR);
-		zlog_debug("  |- New Extended subTLVs status 0x%x", circuit->ext->status);
 	}
 
 	/* and IPv6 */
 	if (adj->ipv6_address_count > 0) {
-		zlog_debug("TE(%s): Update MPLS-TE link parameters with Remote IP addr %s for interface %s",
-			  circuit->area->area_tag,
-			  inet_ntop(AF_INET6, &adj->ipv6_addresses[0], buf, PREFIX2STR_BUFFER),
-			  circuit->interface->name);
 		IPV6_ADDR_COPY(&circuit->ext->neigh_addr6,
 			       &adj->ipv6_addresses[0]);
 		SET_SUBTLV(circuit->ext, EXT_NEIGH_ADDR6);
-		zlog_debug("  |- New Extended subTLVs status 0x%x", circuit->ext->status);
 	}
-
 
 	return 0;
 }
@@ -428,11 +417,10 @@ static void show_ext_sub(struct vty *vty, char *name,
 			  ext->min_delay & TE_EXT_MASK,
 			  ext->max_delay & TE_EXT_MASK);
 	}
-	if IS_SUBTLV(ext, EXT_DELAY_VAR) {
+	if IS_SUBTLV(ext, EXT_DELAY_VAR)
 		sbuf_push(&buf, 4,
 			  "Delay Variation: %" PRIu32 " (micro-sec)\n",
 			  ext->delay_var & TE_EXT_MASK);
-	}
 	if IS_SUBTLV(ext, EXT_PKT_LOSS)
 		sbuf_push(&buf, 4, "%s Link Packet Loss: %g (%%)\n",
 			  IS_ANORMAL(ext->pkt_loss) ? "Anomalous" : "Normal",
