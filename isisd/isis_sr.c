@@ -4,9 +4,10 @@
  *
  * Module name: Segment Routing
  *
- * Author: Olivier Dugeon <olivier.dugeon@orange.com>
- *
  * Copyright (C) 2019 Orange Labs http://www.orange.com
+ *
+ * Author: Olivier Dugeon <olivier.dugeon@orange.com>
+ * Contributor: Renato Westphal <renato@opensourcerouting.org> for NetDef
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -69,9 +70,9 @@
 static inline void add_sid_nhlfe(struct sr_nhlfe nhlfe, struct prefix p);
 static inline void del_sid_nhlfe(struct sr_nhlfe nhlfe, struct prefix p);
 static int srdb_lsp_event(struct isis_lsp *lsp, lsp_event_t event);
-static void sr_circuit_update_sid_adjs(struct isis_circuit *circuit,
+static void sr_circuit_update_sid_adjs(struct isis_adjacency *adj,
 				       struct prefix *nexthop);
-static void sr_circuit_unset_sid_adjs(struct isis_adjacency *adj);
+static inline void sr_add_adj(struct isis_adjacency *adj);
 static int sr_if_new_hook(struct interface *ifp);
 static int sr_update_adj_hook(struct isis_adjacency *adj);
 static void update_in_nhlfe(struct sr_node *self, struct sr_prefix *srp);
@@ -216,7 +217,7 @@ static struct sr_node *sr_node_new(uint8_t *sysid)
 	memcpy(new->sysid, sysid, ISIS_SYS_ID_LEN);
 	new->neighbor = NULL;
 
-	sr_debug("  |-  Created new SR node for %s",
+	sr_debug("   |- Created new SR node for %s",
 		 print_sys_hostname(new->sysid));
 
 	return new;
@@ -230,7 +231,7 @@ static void sr_node_del(struct sr_node *srn)
 		return;
 
 	sr_debug(" |- Remove SR Node %s", print_sys_hostname(srn->sysid));
-	/* Clean Extended Link */
+	/* Clean Adjacency List */
 	list_delete(&srn->adj_sids);
 
 	/* Clean Prefix List */
@@ -260,11 +261,59 @@ static struct sr_node *get_self_by_node(struct sr_node *srn)
 
 /*
  * Functions to management Segment Routing on a per ISIS Area
+ *  - isis_sr_create() call when area is created
+ *  - isis_sr_destroy() call when area is removed
  *  - isis_sr_start() call when segment routing is activate
  *  - isis_sr_stop() call when segment routing is deactivate
  *  - isis_sr_init() call when isis start
  *  - isis_sr_term() call when isis stop
  */
+void isis_sr_create(struct isis_area *area)
+{
+	struct isis_sr_db *srdb = &area->srdb;
+	uint32_t size;
+
+	sr_debug("SR(%s): Creating SRDB for area %s", __func__, area->area_tag);
+
+	memset(srdb, 0, sizeof(struct isis_sr_db));
+	srdb->enabled = false;
+	srdb->self = NULL;
+
+	/* Initialize SRGB, Algorithms and MSD TLVs */
+	/* Only Algorithm SPF is supported */
+	srdb->algo[0] = SR_ALGORITHM_SPF;
+	for (int i = 1; i < SR_ALGORITHM_COUNT; i++)
+		srdb->algo[i] = SR_ALGORITHM_UNSET;
+
+	/* Default values */
+	srdb->msd = 0;
+#ifndef FABRICD
+	srdb->lower_bound = yang_get_default_uint32(
+		"/frr-isisd:isis/instance/segment-routing/srgb/lower-bound");
+	srdb->upper_bound = yang_get_default_uint32(
+		"/frr-isisd:isis/instance/segment-routing/srgb/upper-bound");
+#endif /* ifndef FABRICD */
+
+	/* Reserve Labels Range for SRGB */
+	size = srdb->upper_bound - srdb->lower_bound + 1;
+	if (isis_zebra_request_label_range(srdb->lower_bound, size) == 0)
+		srdb->srgb_lm = true;
+}
+
+void isis_sr_destroy(struct isis_area *area)
+{
+	struct isis_sr_db *srdb = &area->srdb;
+
+	sr_debug("SR(%s): Deleting SRDB for area %s", __func__, area->area_tag);
+	isis_sr_stop(area);
+
+	/* Release Labels range of SRGB */
+	if (srdb->srgb_lm)
+		isis_zebra_release_label_range(srdb->lower_bound,
+					       srdb->upper_bound);
+
+}
+
 void isis_sr_start(struct isis_area *area)
 {
 	struct sr_node *srn;
@@ -273,7 +322,7 @@ void isis_sr_start(struct isis_area *area)
 	struct listnode *cnode, *anode;
 	struct isis_sr_db *srdb = &area->srdb;
 
-	sr_debug("SR (%s): Starting Segment Routing", __func__);
+	sr_debug("SR(%s): Starting Segment Routing", __func__);
 
 	if (!srdb->srgb_lm) {
 		flog_err(
@@ -282,6 +331,9 @@ void isis_sr_start(struct isis_area *area)
 			__func__);
 		return;
 	}
+
+	/* Initialize RB Tree for neighbor SR nodes */
+	RB_INIT(srdb_node_head, &srdb->sr_nodes);
 
 	/* Initialize self SR Node */
 	srn = sr_node_new(area->isis->sysid);
@@ -297,7 +349,7 @@ void isis_sr_start(struct isis_area *area)
 	area->srdb.self = srn;
 	srn->area = area;
 	RB_INSERT(srdb_node_head, &area->srdb.sr_nodes, srn);
-
+	sr_debug("SR(%s): OK. SRN is created. Let's check circuit", __func__);
 	/* Initialize Adjacency for all circuit belongs to this area */
 	for (ALL_LIST_ELEMENTS_RO(area->circuit_list, cnode, circuit)) {
 		if (circuit->circ_type == CIRCUIT_T_BROADCAST) {
@@ -305,11 +357,15 @@ void isis_sr_start(struct isis_area *area)
 			     level++) {
 				struct list *adjdb =
 					circuit->u.bc.adjdb[level - 1];
-				for (ALL_LIST_ELEMENTS_RO(adjdb, anode, adj))
-					sr_update_adj_hook(adj);
+				for (ALL_LIST_ELEMENTS_RO(adjdb, anode, adj)) {
+					sr_debug("SR(%s): Is adjacency at %p", __func__, adj);
+					sr_add_adj(adj);
+				}
 			}
 		} else if (circuit->circ_type == CIRCUIT_T_P2P) {
-			sr_update_adj_hook(circuit->u.p2p.neighbor);
+			sr_debug("SR(%s): Is p2p adjacency at %p", __func__, circuit->u.p2p.neighbor);
+			sr_add_adj(circuit->u.p2p.neighbor);
+
 		}
 	}
 
@@ -325,11 +381,6 @@ void isis_sr_stop(struct isis_area *area)
 	struct isis_sr_db *srdb = &area->srdb;
 
 	sr_debug("SR (%s): Stopping Segment Routing", __func__);
-
-	/* Release Labels range of SRGB */
-	if (srdb->srgb_lm)
-		isis_zebra_release_label_range(srdb->lower_bound,
-					       srdb->upper_bound);
 
 	/* Stop SR */
 	srdb->enabled = false;
@@ -349,38 +400,8 @@ void isis_sr_stop(struct isis_area *area)
 	lsp_regenerate_schedule(area, area->is_type, 0);
 }
 
-void isis_sr_init(struct isis_area *area)
+void isis_sr_init()
 {
-	struct isis_sr_db *srdb = &area->srdb;
-	uint32_t size;
-
-	memset(srdb, 0, sizeof(struct isis_sr_db));
-	srdb->enabled = false;
-	srdb->self = NULL;
-
-	/* Initialize SRGB, Algorithms and MSD TLVs */
-	/* Only Algorithm SPF is supported */
-	srdb->algo[0] = SR_ALGORITHM_SPF;
-	for (int i = 1; i < SR_ALGORITHM_COUNT; i++)
-		srdb->algo[i] = SR_ALGORITHM_UNSET;
-
-	/* Initialize RB Tree for neighbor SR nodes */
-	RB_INIT(srdb_node_head, &srdb->sr_nodes);
-
-	/* Default values */
-	srdb->msd = 0;
-#ifndef FABRICD
-	srdb->lower_bound = yang_get_default_uint32(
-		"/frr-isisd:isis/instance/segment-routing/srgb/lower-bound");
-	srdb->upper_bound = yang_get_default_uint32(
-		"/frr-isisd:isis/instance/segment-routing/srgb/upper-bound");
-#endif /* ifndef FABRICD */
-
-	/* Reserve Labels Range for SRGB */
-	size = srdb->upper_bound - srdb->lower_bound + 1;
-	if (isis_zebra_request_label_range(srdb->lower_bound, size) == 0)
-		srdb->srgb_lm = true;
-
 	/* Register Various event hook */
 	hook_register_prio(isis_lsp_event_hook, 100, srdb_lsp_event);
 	hook_register(isis_if_new_hook, sr_if_new_hook);
@@ -457,8 +478,32 @@ void isis_sr_msd_update(struct isis_area *area)
 }
 
 /*
- * Functions to install MPLS entry corresponding to Prefix a Adjacency SID
+ * Functions to install MPLS entry corresponding to Prefix or Adjacency SID
  */
+
+static char *sr_op2str(char *buf, size_t size, mpls_label_t label_in,
+		       mpls_label_t label_out)
+{
+	if (size < 24)
+		return NULL;
+
+	switch (label_out) {
+	case MPLS_LABEL_IMPLICIT_NULL:
+		snprintf(buf, size, "Pop(%u)", label_in);
+		break;
+	case MPLS_LABEL_IPV4_EXPLICIT_NULL:
+	case MPLS_LABEL_IPV6_EXPLICIT_NULL:
+		snprintf(buf, size, "Swap(%u, null)", label_in);
+		break;
+	case MPLS_INVALID_LABEL:
+		snprintf(buf, size, "no-op.");
+		break;
+	default:
+		snprintf(buf, size, "Swap(%u, %u)", label_in, label_out);
+		break;
+	}
+	return buf;
+}
 
 /* Compute label from index */
 static mpls_label_t index2label(uint32_t index, struct isis_srgb srgb)
@@ -484,26 +529,27 @@ static int sr_zebra_send_mpls_labels(int cmd, struct sr_nhlfe nhlfe,
 	stream_reset(s);
 
 	zclient_create_header(s, cmd, VRF_DEFAULT);
-	stream_putc(s, ZEBRA_LSP_SR);
+	stream_putc(s, ZEBRA_LSP_ISIS_SR);
 	stream_putl(s, p.family);
 	if (p.family == AF_INET) {
 		stream_put_in_addr(s, &p.u.prefix4);
 		stream_putc(s, p.prefixlen);
 		stream_put_in_addr(s, &nhlfe.nexthop);
-	} else {
+	}
+	if (p.family == AF_INET6) {
 		stream_write(s, (uint8_t *)&p.u.prefix6, 16);
 		stream_putc(s, p.prefixlen);
 		stream_write(s, (uint8_t *)&nhlfe.nexthop6, 16);
 	}
 	stream_putl(s, nhlfe.ifindex);
-	stream_putc(s, ISIS_SR_PRIORITY_DEFAULT);
+	stream_putc(s, 0);
 	stream_putl(s, nhlfe.label_in);
 	stream_putl(s, nhlfe.label_out);
 
 	/* Put length at the first point of the stream. */
 	stream_putw_at(s, 0, stream_get_endp(s));
 
-	sr_debug("    |-  %s MPLS entry %u/%u for %s via %u",
+	sr_debug("      |-  %s MPLS entry %u/%u for %s via %u",
 		 cmd == ZEBRA_MPLS_LABELS_ADD ? "Add" : "Delete",
 		 nhlfe.label_in, nhlfe.label_out,
 		 prefix2str(&p, buf, PREFIX2STR_BUFFER),
@@ -519,6 +565,8 @@ static int sr_zebra_send_mpls_ftn(int cmd, struct sr_nhlfe nhlfe,
 	struct zapi_route api;
 	struct zapi_nexthop *api_nh;
 	char buf[PREFIX2STR_BUFFER];
+
+	return 1;
 
 	memset(&api, 0, sizeof(struct zapi_route));
 	api.vrf_id = VRF_DEFAULT;
@@ -550,17 +598,65 @@ static int sr_zebra_send_mpls_ftn(int cmd, struct sr_nhlfe nhlfe,
 	}
 
 	inet_ntop(p.family, &p.u.prefix, buf, PREFIX2STR_BUFFER);
-	sr_debug("    |-  %s FEC %u for %s/%u via %u",
+	sr_debug("      |-  %s FEC %u for %s/%u via %u",
 		 cmd == ZEBRA_ROUTE_ADD ? "Add" : "Delete", nhlfe.label_out,
 		 buf, p.prefixlen, nhlfe.ifindex);
 
 	return zclient_route_send(cmd, zclient, &api);
 }
 
+#ifdef NEW
+/* Function to send MPLS label for Segment Routing */
+static void sr_send_mpls_labels(int cmd, struct sr_nhlfe nhlfe,
+				struct prefix prefix)
+{
+	struct stream *s;
+
+	/* Reset stream. */
+	s = zclient->obuf;
+	stream_reset(s);
+
+	zclient_create_header(s, cmd, VRF_DEFAULT);
+	stream_putc(s, (LABELS_FTN | LABELS_NEXTHOP));
+	stream_putc(s, ZEBRA_LSP_ISIS_SR);
+
+	stream_putw(s, prefix.family);
+	stream_put_prefix(s, &prefix);
+	stream_putc(s, ZEBRA_ROUTE_ISIS);
+	stream_putw(s, 0);
+
+	switch (prefix.family) {
+	case AF_INET:
+		stream_putc(s, NEXTHOP_TYPE_IPV4_IFINDEX);
+		stream_putw(s, AF_INET);
+		stream_put_in_addr(s, &nhlfe.nexthop);
+		break;
+	case AF_INET6:
+		stream_putc(s, NEXTHOP_TYPE_IPV6_IFINDEX);
+		stream_putw(s, AF_INET6);
+		stream_write(s, (uint8_t *)&nhlfe.nexthop6, 16);
+		break;
+	default:
+		break;
+	}
+	stream_putl(s, nhlfe.ifindex);
+
+	stream_putl(s, nhlfe.label_in);
+	stream_putl(s, nhlfe.label_out);
+
+	/* Put length at the first point of the stream. */
+	stream_putw_at(s, 0, stream_get_endp(s));
+
+	zclient_send_message(zclient);
+}
+#endif
+
 /* Add new NHLFE entry for SID */
 static inline void add_sid_nhlfe(struct sr_nhlfe nhlfe, struct prefix p)
 {
-	if ((nhlfe.label_in != 0) && (nhlfe.label_out != MPLS_INVALID_LABEL)) {
+
+	if ((nhlfe.label_in != MPLS_INVALID_LABEL)
+	    && (nhlfe.label_out != MPLS_INVALID_LABEL)) {
 		sr_zebra_send_mpls_labels(ZEBRA_MPLS_LABELS_ADD, nhlfe, p);
 		if (nhlfe.label_out > MPLS_LABEL_RESERVED_MAX)
 			sr_zebra_send_mpls_ftn(ZEBRA_ROUTE_ADD, nhlfe, p);
@@ -570,7 +666,9 @@ static inline void add_sid_nhlfe(struct sr_nhlfe nhlfe, struct prefix p)
 /* Remove NHLFE entry for SID */
 static inline void del_sid_nhlfe(struct sr_nhlfe nhlfe, struct prefix p)
 {
-	if ((nhlfe.label_in != 0)  && (nhlfe.label_out != MPLS_INVALID_LABEL)) {
+
+	if ((nhlfe.label_in != MPLS_INVALID_LABEL)
+	    && (nhlfe.label_out != MPLS_INVALID_LABEL)) {
 		sr_zebra_send_mpls_labels(ZEBRA_MPLS_LABELS_DELETE, nhlfe, p);
 		if (nhlfe.label_out > MPLS_LABEL_RESERVED_MAX)
 			sr_zebra_send_mpls_ftn(ZEBRA_ROUTE_DELETE, nhlfe, p);
@@ -591,12 +689,72 @@ static inline void update_sid_nhlfe(struct sr_nhlfe n1, struct sr_nhlfe n2,
 	add_sid_nhlfe(n2, p);
 }
 
+static mpls_label_t sr_prefix_in_label(const struct sr_prefix *srp,
+				       const struct sr_node *self)
+{
+	if ((srp->srn == self)
+	    && (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_EXPLICIT_NULL))) {
+		if (srp->prefix.family == AF_INET)
+			return MPLS_LABEL_IPV4_EXPLICIT_NULL;
+		else
+			return MPLS_LABEL_IPV6_EXPLICIT_NULL;
+	}
+
+	if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE))
+		return srp->sid.value;
+
+	return index2label(srp->sid.value, self->cap.srgb);
+
+}
+
+static mpls_label_t sr_prefix_out_label(const struct sr_prefix *srp,
+					const struct sr_node *srnext)
+{
+
+	/* Is it the Self SR-Node (srnext is null)? */
+	if (srnext == NULL) {
+		if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP)
+		    && !CHECK_FLAG(srp->sid.flags,
+				   ISIS_PREFIX_SID_EXPLICIT_NULL))
+			return MPLS_LABEL_IMPLICIT_NULL;
+		else
+			return MPLS_INVALID_LABEL;
+	}
+
+	/* Is the next SR node the last hop? */
+	if (srnext == srp->srn) {
+		if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE)) {
+			if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP))
+				return srp->sid.value;
+			else
+				return MPLS_INVALID_LABEL;
+		}
+
+		if (!CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP))
+			return MPLS_LABEL_IMPLICIT_NULL;
+
+		if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_EXPLICIT_NULL)) {
+			if (srp->prefix.family == AF_INET)
+				return MPLS_LABEL_IPV4_EXPLICIT_NULL;
+			else
+				return MPLS_LABEL_IPV6_EXPLICIT_NULL;
+		}
+	}
+
+	/* Absolute SID value. */
+	if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE))
+		return MPLS_INVALID_LABEL;
+
+	/* Index SID value. */
+	return index2label(srp->sid.value, srnext->cap.srgb);
+}
+
 /* Compute MPLS label */
 static void update_mpls_labels(struct sr_nhlfe *nhlfe, struct sr_prefix *srp)
 {
 	struct sr_node *self;
 	struct sr_nhlfe old;
-	char label[16];
+	char buf[32];
 
 	self = get_self_by_node(srp->srn);
 	if ((nhlfe->srnext == NULL) && (srp->srn != self)) {
@@ -611,10 +769,7 @@ static void update_mpls_labels(struct sr_nhlfe *nhlfe, struct sr_prefix *srp)
 	memcpy(&old, nhlfe, sizeof(struct sr_nhlfe));
 
 	/* Compute Input Label with self SRGB */
-	if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE))
-		nhlfe->label_in = srp->sid.value;
-	else
-		nhlfe->label_in = index2label(srp->sid.value, self->cap.srgb);
+	nhlfe->label_in = sr_prefix_in_label(srp, self);
 
 	/*
 	 * and Output Label with
@@ -624,53 +779,14 @@ static void update_mpls_labels(struct sr_nhlfe *nhlfe, struct sr_prefix *srp)
 	 *    request NO_PHP / EXPLICIT NULL label
 	 *  - Value label or SID in Next hop SR Node SRGB for other cases
 	 */
+	nhlfe->label_out = sr_prefix_out_label(srp, nhlfe->srnext);
 
-	if (srp->srn == self) {
-		if CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP)
-			nhlfe->label_out = MPLS_LABEL_IMPLICIT_NULL;
-		else
-			nhlfe->label_out = MPLS_INVALID_LABEL;
-	} else if (nhlfe->srnext == srp->srn) {
-		if (!CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP))
-			nhlfe->label_out = MPLS_LABEL_IMPLICIT_NULL;
-		if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_EXPLICIT_NULL)) {
-			if (srp->prefix.family == AF_INET)
-				nhlfe->label_out =
-					MPLS_LABEL_IPV4_EXPLICIT_NULL;
-			else
-				nhlfe->label_out =
-					MPLS_LABEL_IPV6_EXPLICIT_NULL;
-		}
-	} else {
-		if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE))
-
-			nhlfe->label_out = srp->sid.value;
-		else
-			nhlfe->label_out = index2label(srp->sid.value,
-						       nhlfe->srnext->cap.srgb);
-	}
-
-	switch (nhlfe->label_out) {
-	case MPLS_LABEL_IMPLICIT_NULL:
-		sprintf(label, "pop");
-		break;
-	case MPLS_LABEL_IPV4_EXPLICIT_NULL:
-	case MPLS_LABEL_IPV6_EXPLICIT_NULL:
-		sprintf(label, "null");
-		break;
-	case MPLS_INVALID_LABEL:
-		sprintf(label, "no-label");
-		break;
-	default:
-		sprintf(label, "%u", nhlfe->label_out);
-		break;
-	}
-	sr_debug("    |-  Computed new labels in: %u out: %s",
-		 nhlfe->label_in, label);
+	sr_debug("    |-  Computed new SR operation: %s",
+		 sr_op2str(buf, 32, nhlfe->label_in, nhlfe->label_out));
 
 	/* Check if it is an update or a new NHLFE */
-	if ((old.label_in != nhlfe->label_in)
-	    || (old.label_out != nhlfe->label_out))
+	if ((old.label_in != 0 && old.label_in != nhlfe->label_in)
+	    || (old.label_out != 0 && old.label_out !=nhlfe->label_out))
 		update_sid_nhlfe(old, *nhlfe, srp->prefix);
 	else
 		add_sid_nhlfe(*nhlfe, srp->prefix);
@@ -692,8 +808,6 @@ static struct sr_adjacency *sr_adj_add(struct isis_circuit *circuit,
 {
 	struct sr_adjacency *sra;
 	struct isis_adj_sid *adj;
-	struct prefix_ipv4 *ipv4;
-	struct prefix_ipv6 *ipv6;
 
 	/* Create new Adjacency subTLVs */
 	adj = XCALLOC(MTYPE_ISIS_SR, sizeof(struct isis_adj_sid));
@@ -717,17 +831,14 @@ static struct sr_adjacency *sr_adj_add(struct isis_circuit *circuit,
 
 	/* Set NHLFE ifindex and nexthop */
 	sra->nhlfe.ifindex = circuit->interface->ifindex;
-	if ((nexthop->family == AF_INET) && listcount(circuit->ip_addrs)) {
-		ipv4 = (struct prefix_ipv4 *)listgetdata(
-			(struct listnode *)listhead(circuit->ip_addrs));
-		PREFIX_COPY_IPV4(&sra->prefix, ipv4);
+	if (nexthop->family == AF_INET) {
+		sra->prefix.family = AF_INET;
+		sra->prefix.prefixlen = 0;
 		IPV4_ADDR_COPY(&sra->nhlfe.nexthop, &nexthop->u.prefix4);
 	}
-	if ((nexthop->family == AF_INET6)
-	    && listcount(circuit->ipv6_non_link)) {
-		ipv6 = (struct prefix_ipv6 *)listgetdata(
-			(struct listnode *)listhead(circuit->ipv6_non_link));
-		PREFIX_COPY_IPV6(&sra->prefix, ipv6);
+	if (nexthop->family == AF_INET6) {
+		sra->prefix.family = AF_INET6;
+		sra->prefix.prefixlen = 0;
 		IPV6_ADDR_COPY(&sra->nhlfe.nexthop6, &nexthop->u.prefix6);
 	}
 	/* Set Input & Output Label */
@@ -746,8 +857,6 @@ static struct sr_adjacency *sr_lan_adj_add(struct isis_circuit *circuit,
 {
 	struct sr_adjacency *sra;
 	struct isis_lan_adj_sid *lan;
-	struct prefix_ipv4 *ipv4;
-	struct prefix_ipv6 *ipv6;
 
 	/* Create new LAN Adjacency subTLVs */
 	lan = XCALLOC(MTYPE_ISIS_SR, sizeof(struct isis_lan_adj_sid));
@@ -772,17 +881,14 @@ static struct sr_adjacency *sr_lan_adj_add(struct isis_circuit *circuit,
 
 	/* Set NHLFE ifindex and nexthop */
 	sra->nhlfe.ifindex = circuit->interface->ifindex;
-	if ((nexthop->family == AF_INET) && listcount(circuit->ip_addrs)) {
-		ipv4 = (struct prefix_ipv4 *)listgetdata(
-			(struct listnode *)listhead(circuit->ip_addrs));
-		PREFIX_COPY_IPV4(&sra->prefix, ipv4);
+	if (nexthop->family == AF_INET) {
+		sra->prefix.family = AF_INET;
+		sra->prefix.prefixlen = 0;
 		IPV4_ADDR_COPY(&sra->nhlfe.nexthop, &nexthop->u.prefix4);
 	}
-	if ((nexthop->family == AF_INET6)
-	    && listcount(circuit->ipv6_non_link)) {
-		ipv6 = (struct prefix_ipv6 *)listgetdata(
-			(struct listnode *)listhead(circuit->ipv6_non_link));
-		PREFIX_COPY_IPV6(&sra->prefix, ipv6);
+	if (nexthop->family == AF_INET6) {
+		sra->prefix.family = AF_INET6;
+		sra->prefix.prefixlen = 0;
 		IPV6_ADDR_COPY(&sra->nhlfe.nexthop6, &nexthop->u.prefix6);
 	}
 	/* Set Input & Output Label */
@@ -795,16 +901,15 @@ static struct sr_adjacency *sr_lan_adj_add(struct isis_circuit *circuit,
 	return sra;
 }
 
-static void sr_circuit_update_sid_adjs(struct isis_circuit *circuit,
+static void sr_circuit_update_sid_adjs(struct isis_adjacency *adj,
 				       struct prefix *nexthop)
 {
+	struct isis_circuit *circuit;
 	struct sr_node *self;
 	struct sr_adjacency *sra;
-	struct listnode *node;
-	struct list *adjdb;
-	struct isis_adjacency *ad;
 	char buf[PREFIX2STR_BUFFER];
 
+	circuit = adj->circuit;
 	self = get_self_by_area(circuit->area);
 
 	inet_ntop(nexthop->family, &nexthop->u.prefix, buf, PREFIX2STR_BUFFER);
@@ -820,53 +925,49 @@ static void sr_circuit_update_sid_adjs(struct isis_circuit *circuit,
 	switch (circuit->circ_type) {
 	case CIRCUIT_T_BROADCAST:
 		/* Set LAN Adj SID for each neighbors */
-		adjdb = circuit->u.bc.adjdb[circuit->is_type - 1];
-		for (ALL_LIST_ELEMENTS_RO(adjdb, node, ad)) {
-			/* Install Primary SID ... */
-			sra = sr_lan_adj_add(circuit, ad, nexthop, false);
-			sra->srn = self;
-			listnode_add(self->adj_sids, sra);
-			/* ... then Backup SID */
-			sra = sr_lan_adj_add(circuit, ad, nexthop, true);
-			sra->srn = self;
-			listnode_add(self->adj_sids, sra);
-		}
+		/* Install Primary SID ... */
+		sra = sr_lan_adj_add(circuit, adj, nexthop, false);
+		sra->srn = self;
+		listnode_add(self->adj_sids, sra);
+		/* ... then Backup SID */
+//		sra = sr_lan_adj_add(circuit, adj, nexthop, true);
+//		sra->srn = self;
+//		listnode_add(self->adj_sids, sra);
+
 		SET_SUBTLV(circuit->ext, EXT_LAN_ADJ_SID);
 		break;
 	case CIRCUIT_T_P2P:
 		/* Install Primary SID ... */
-		sra = sr_adj_add(circuit, circuit->u.p2p.neighbor, nexthop,
-				 false);
+		sra = sr_adj_add(circuit, adj, nexthop, false);
 		sra->srn = self;
 		listnode_add(self->adj_sids, sra);
 		/* ... then Backup SID */
-		sra = sr_adj_add(circuit, circuit->u.p2p.neighbor, nexthop,
-				 true);
-		sra->srn = self;
-		listnode_add(self->adj_sids, sra);
+//		sra = sr_adj_add(circuit, adj, nexthop, true);
+//		sra->srn = self;
+//		listnode_add(self->adj_sids, sra);
 		break;
 	default:
 		break;
 	}
 }
 
-static void sr_circuit_unset_sid_adjs(struct isis_adjacency *adj)
+static int sr_update_adj_hook(struct isis_adjacency *adj)
 {
 	struct isis_circuit *circuit;
 	struct sr_node *self;
 	struct listnode *node, *nnode;
 	struct sr_adjacency *sra;
 
-	/* Sanity Check */
-	if (adj == NULL || adj->circuit == NULL)
-		return;
+	/* Process Only Adjacency when goes Down */
+	if (adj->adj_state != ISIS_ADJ_DOWN)
+		return 0;
 
 	circuit = adj->circuit;
 	if (!IS_SR(circuit->area) || (circuit->ext == NULL))
-		return;
+		return 0;
 
-	sr_debug("  |-  Unset Adjacency SID for interface %s",
-		 circuit->interface->name);
+	sr_debug("SR(%s): Adjacency with %s goes DOWN", __func__,
+		 print_sys_hostname(adj->sysid));
 
 	/* remove corresponding SR Adjacency */
 	self = get_self_by_area(circuit->area);
@@ -876,51 +977,53 @@ static void sr_circuit_unset_sid_adjs(struct isis_adjacency *adj)
 			del_sr_adj((void *)sra);
 		}
 	}
+
+	return 0;
 }
 
-static int sr_update_adj_hook(struct isis_adjacency *adj)
+static inline void sr_add_adj(struct isis_adjacency *adj)
+{
+	if (adj) {
+		isis_sr_update_adj(adj, AF_INET, true);
+		isis_sr_update_adj(adj, AF_INET6, true);
+	}
+}
+
+void isis_sr_update_adj(struct isis_adjacency *adj, uint8_t family, bool adj_up)
 {
 
 	struct prefix nexthop;
 
 	/* Sanity Check */
 	if (adj == NULL || adj->circuit == NULL)
-		return 1;
+		return;
 
 	/* Skip loopback */
 	if (if_is_loopback(adj->circuit->interface))
-		return 0;
+		return;
 
 	/* Check is SR is enable */
 	if (!IS_SR(adj->circuit->area))
-		return 0;
+		return;
 
-	switch (adj->adj_state) {
-	case ISIS_ADJ_UP:
-		/* IPv4 first */
-		if (adj->ipv4_address_count > 0) {
+	if (adj_up) {
+		/* IPv4 */
+		if (family == AF_INET) {
 			nexthop.family = AF_INET;
 			IPV4_ADDR_COPY(&nexthop.u.prefix4,
 				       &adj->ipv4_addresses[0]);
-			sr_circuit_update_sid_adjs(adj->circuit, &nexthop);
+			sr_circuit_update_sid_adjs(adj, &nexthop);
 		}
-
 		/* and IPv6 */
-		if (adj->ipv6_address_count > 0) {
+		if (family == AF_INET6) {
 			nexthop.family = AF_INET6;
 			IPV6_ADDR_COPY(&nexthop.u.prefix6,
 				       &adj->ipv6_addresses[0]);
-			sr_circuit_update_sid_adjs(adj->circuit, &nexthop);
+			sr_circuit_update_sid_adjs(adj, &nexthop);
 		}
-		break;
-	case ISIS_ADJ_DOWN:
-		sr_circuit_unset_sid_adjs(adj);
-		break;
-	default:
-		break;
+	} else {
+		sr_update_adj_hook(adj);
 	}
-
-	return 0;
 }
 
 static int sr_if_new_hook(struct interface *ifp)
@@ -960,7 +1063,6 @@ static int sr_if_new_hook(struct interface *ifp)
 			sr_debug("  |- Set Node SID to prefix %s/%d ifindex %d",
 				 buf, srp->prefix.prefixlen, ifp->ifindex);
 			SET_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NODE);
-			sr_debug("  |- New flags: 0x%x", srp->sid.flags);
 			/* Set MPLS entry */
 			if (listcount(srp->nhlfes) == 0) {
 				nhlfe = XCALLOC(MTYPE_ISIS_SR,
@@ -972,6 +1074,7 @@ static int sr_if_new_hook(struct interface *ifp)
 						srp->nhlfes));
 			}
 			nhlfe->ifindex = ifp->ifindex;
+			nhlfe->srnext = NULL;
 			update_mpls_labels(nhlfe, srp);
 		}
 	}
@@ -1013,6 +1116,16 @@ void isis_sr_prefix_commit(struct sr_prefix *srp)
 {
 	struct interface *ifp;
 	struct sr_nhlfe *nhlfe;
+	struct isis_area *area;
+
+	/* Verify that SID index is less than SRGB upper bound */
+	if (!CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE)
+	    && (srp->sid.value > srp->srn->area->srdb.upper_bound - 1)) {
+		flog_warn(EC_LIB_NB_CB_CONFIG_VALIDATE,
+			  "Index is out of SRGB range");
+		isis_sr_prefix_del(srp);
+		return;
+	}
 
 	/* Set flags & NHLFE if interface is Loopback */
 	ifp = if_lookup_prefix(&srp->prefix, VRF_DEFAULT);
@@ -1028,7 +1141,11 @@ void isis_sr_prefix_commit(struct sr_prefix *srp)
 				(struct listnode *)listhead(srp->nhlfes));
 		}
 		nhlfe->ifindex = ifp->ifindex;
+		nhlfe->srnext = NULL;
 		update_mpls_labels(nhlfe, srp);
+		area = srp->srn->area;
+
+		lsp_regenerate_schedule(area, area->is_type, 0);
 	}
 }
 
@@ -1050,6 +1167,7 @@ static void sr_prefix_del(struct sr_node *srn, struct sr_prefix *srp)
 
 void isis_sr_prefix_del(struct sr_prefix *srp)
 {
+	struct isis_area *area;
 	char buf[PREFIX2STR_BUFFER];
 
 	inet_ntop(srp->prefix.family, &srp->prefix.u.prefix, buf,
@@ -1058,7 +1176,10 @@ void isis_sr_prefix_del(struct sr_prefix *srp)
 		 buf, srp->prefix.prefixlen,
 		 print_sys_hostname(srp->srn->sysid));
 
+	area = srp->srn->area;
 	sr_prefix_del(srp->srn, srp);
+
+	lsp_regenerate_schedule(area, area->is_type, 0);
 }
 
 struct sr_prefix *isis_sr_prefix_find(const struct isis_area *area,
@@ -1160,15 +1281,10 @@ static struct list *get_nexthop_by_prefix(struct isis_area *area,
 	struct route_table *table;
 	struct isis_route_info *rinfo;
 	uint8_t tree;
-	char buf[PREFIX2STR_BUFFER];
 
 	/* Sanity Check */
 	if (area == NULL)
 		return NULL;
-
-	inet_ntop(p.family, &p.u.prefix, buf, PREFIX2STR_BUFFER);
-	sr_debug("      |-  Search Nexthop for prefix %s/%u",
-		 buf, p.prefixlen);
 
 	switch(p.family) {
 	case AF_INET:
@@ -1237,7 +1353,7 @@ static int update_prefix_nhlfe(struct isis_area *area, struct sr_prefix *srp)
 
 	inet_ntop(srp->prefix.family, &srp->prefix.u.prefix, buf,
 		  PREFIX2STR_BUFFER);
-	sr_debug("    |-  Compute NHLFE for prefix %s/%u",
+	sr_debug("    |-  Update NHLFE for prefix %s/%u",
 		 buf, srp->prefix.prefixlen);
 
 	/* First determine the nexthop */
@@ -1308,10 +1424,6 @@ static void update_in_nhlfe(struct sr_node *self, struct sr_prefix *srp)
 	    && !CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_NO_PHP))
 		return;
 
-	/* Process only SID Index */
-	if (CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE))
-		return;
-
 	/* OK. Update all NHLFE with new incoming label */
 	for (ALL_LIST_ELEMENTS_RO(srp->nhlfes, node, nhlfe)) {
 		memcpy(&old, nhlfe, sizeof(struct sr_nhlfe));
@@ -1359,11 +1471,12 @@ static struct sr_node *sr_cap_update(struct isis_area *area, uint8_t *lspid,
 	struct sr_node *srn;
 	struct sr_node key = {};
 
-	/* Get SR Node in SRDB from LSP ID, create a new one if not exist */
+	/* Get SR Node in SRDB from ID */
 	memcpy(&key.sysid, lspid, ISIS_SYS_ID_LEN);
 	srn = RB_FIND(srdb_node_head, &area->srdb.sr_nodes, &key);
+	/* Create new one if not found */
 	if (srn == NULL) {
-		srn = sr_node_new(key.sysid);
+		srn = sr_node_new(lspid);
 		/* Sanity check in case of */
 		if (srn == NULL) {
 			flog_err(EC_ISIS_SR_NODE_CREATE,
@@ -1380,7 +1493,10 @@ static struct sr_node *sr_cap_update(struct isis_area *area, uint8_t *lspid,
 	/* Set Default Algorithm if unset */
 	if (srn->cap.algo[0] == SR_ALGORITHM_UNSET)
 		srn->cap.algo[0] = SR_ALGORITHM_SPF;
-	srn->cap.msd = cap->msd;
+
+	/* Update MSD */
+	if (srn->cap.msd != cap->msd)
+		srn->cap.msd = cap->msd;
 
 	/* Check if it is a new SR Node or not */
 	if (srn->area == NULL) {
@@ -1418,10 +1534,6 @@ static void sr_prefix_update(struct sr_node *srn, union prefixconstptr prefix,
 	bool found = false;
 	char buf[PREFIX2STR_BUFFER];
 
-	/* Process only Global Prefix SID */
-	if (CHECK_FLAG(psid->flags, ISIS_PREFIX_SID_LOCAL))
-		return;
-
 	sr_debug("  |- Process Extended IP LSP for Node %s",
 		 print_sys_hostname(srn->sysid));
 
@@ -1451,7 +1563,7 @@ static void sr_prefix_update(struct sr_node *srn, union prefixconstptr prefix,
 
 	inet_ntop(srp->prefix.family, &srp->prefix.u.prefix, buf,
 		  PREFIX2STR_BUFFER);
-	sr_debug("  |-  %s Prefix SID %s/%d for SR-Node %s",
+	sr_debug("   |-  %s Prefix SID %s/%d for SR-Node %s",
 		 sr_status2str[srp->status], buf, srp->prefix.prefixlen,
 		 print_sys_hostname(srn->sysid));
 }
@@ -1464,8 +1576,14 @@ static void srdb_commit_prefix(struct sr_node *srn)
 {
 	struct listnode *node, *nnode;
 	struct sr_prefix *srp;
+	char buf[PREFIX2STR_BUFFER];
 
 	for (ALL_LIST_ELEMENTS(srn->pref_sids, node, nnode, srp)) {
+		inet_ntop(srp->prefix.family, &srp->prefix.u.prefix, buf,
+			  PREFIX2STR_BUFFER);
+		sr_debug("   |-  Commit Prefix SID %s/%d", buf,
+			 srp->prefix.prefixlen);
+
 		switch (srp->status) {
 		case IDLE_SID:
 			sr_prefix_del(srn, srp);
@@ -1591,25 +1709,26 @@ static int srdb_lsp_event(struct isis_lsp *lsp, lsp_event_t event)
 	if(!IS_SR(lsp->area))
 		return rc;
 
-	/* Skip LSP pseudo or fragment that not carry SR information */
-	if (LSP_PSEUDO_ID(lsp->hdr.lsp_id) != 0
-	    || LSP_FRAGMENT(lsp->hdr.lsp_id) != 0) {
-		sr_debug("SR (%s): Skip Pseudo or fragment LSP %s", __func__,
-			 rawlspid_print(lsp->hdr.lsp_id));
-		return rc;
-	}
-
 	sr_debug("SR (%s): Process LSP id %s", __func__,
 		 rawlspid_print(lsp->hdr.lsp_id));
+
+	/* Fragment usually not carry SR information.
+	 * Process them differently */
+	if (LSP_PSEUDO_ID(lsp->hdr.lsp_id) != 0
+	    || LSP_FRAGMENT(lsp->hdr.lsp_id) != 0) {
+	        sr_debug("SR (%s): Skip Pseudo or fragment LSP %s", __func__,
+	             rawlspid_print(lsp->hdr.lsp_id));
+	        return rc;
+	}
 
 	switch(event) {
 	case LSP_ADD:
 	case LSP_UPD:
 		/* Check that there is a valid SR info in this LSP */
-		if ((lsp->tlvs->router_cap != NULL)
+		if (((lsp->tlvs->router_cap != NULL)
 		    && (lsp->tlvs->router_cap->srgb.range_size != 0)
 		    && (lsp->tlvs->router_cap->srgb.lower_bound
-			> MPLS_LABEL_RESERVED_MAX))
+			> MPLS_LABEL_RESERVED_MAX)))
 			rc = srdb_update_lsp(lsp);
 		else
 			rc = srdb_del_lsp(lsp);
@@ -1723,38 +1842,24 @@ void isis_sr_prefix_update(struct isis_area *area, struct prefix *prefix)
  * Followings are vty command functions.
  * --------------------------------------
  */
-static void show_sr_prefix(struct sbuf *sbuf, struct json_object *json,
-			   struct sr_prefix *srp)
+static void show_sr_prefix(struct sbuf *sbuf, struct sr_prefix *srp)
 {
 	struct listnode *node;
 	struct sr_nhlfe *nhlfe;
 	struct interface *itf;
-	char pref[19];
+	char pref[23];
 	char sid[22];
-	char label[8];
+	char op[32];
 	int indent = 0;
 	char buf[PREFIX2STR_BUFFER];
-	json_object *json_prefix = NULL, *json_obj;
-	json_object *json_nh = NULL;
 
 	inet_ntop(srp->prefix.family, &srp->prefix.u.prefix, buf,
 		  PREFIX2STR_BUFFER);
-	snprintf(pref, 19, "%s/%u", buf, srp->prefix.prefixlen);
+	snprintf(pref, 23, "%s/%u", buf, srp->prefix.prefixlen);
 	snprintf(sid, 22, "SR Pfx (idx %u)", srp->sid.value);
-	if (json) {
-		json_prefix = json_object_new_object();
-		json_object_string_add(json_prefix, "prefix", pref);
-		json_object_int_add(json_prefix, "sid", srp->sid.value);
-		json_nh = json_object_new_array();
-		json_object_object_add(json_prefix, "nhlfe", json_nh);
-	} else
-		sbuf_push(sbuf, 0, "%18s  %21s  ", pref, sid);
+	sbuf_push(sbuf, 0, "%22s  %21s  ", pref, sid);
 
 	for (ALL_LIST_ELEMENTS_RO(srp->nhlfes, node, nhlfe)) {
-		if (nhlfe->label_out == MPLS_LABEL_IMPLICIT_NULL)
-			sprintf(label, "pop");
-		else
-			sprintf(label, "%u", nhlfe->label_out);
 		itf = if_lookup_by_index(nhlfe->ifindex, VRF_DEFAULT);
 		if (srp->prefix.family == AF_INET)
 			inet_ntop(AF_INET, &nhlfe->nexthop, buf,
@@ -1762,28 +1867,14 @@ static void show_sr_prefix(struct sbuf *sbuf, struct json_object *json,
 		else
 			inet_ntop(AF_INET6, &nhlfe->nexthop6, buf,
 				  PREFIX2STR_BUFFER);
-		if (json) {
-			json_obj = json_object_new_object();
-			json_object_int_add(json_obj, "inputLabel",
-					    nhlfe->label_in);
-			json_object_string_add(json_obj, "outputLabel", label);
-			json_object_string_add(json_obj, "interface",
-					       itf ? itf->name : "-");
-			json_object_string_add(json_obj, "nexthop", buf);
-			json_object_array_add(json_nh, json_obj);
-		} else {
-			sbuf_push(sbuf, indent, "%8u  %9s  %9s  %15s\n",
-				  nhlfe->label_in, label,
-				  itf ? itf->name : "-", buf);
-			indent = 43;
-		}
+		sbuf_push(sbuf, indent, "%20s  %9s  %s\n",
+			  sr_op2str(op, 32, nhlfe->label_in, nhlfe->label_out),
+			  itf ? itf->name : "-", buf);
+		indent = 47;
 	}
-	if (json)
-		json_object_array_add(json, json_prefix);
 }
 
-static void show_sr_node(struct vty *vty, struct json_object *json,
-			 struct sr_node *srn)
+static void show_sr_node(struct vty *vty, struct sr_node *srn)
 {
 
 	struct listnode *node;
@@ -1791,13 +1882,10 @@ static void show_sr_node(struct vty *vty, struct json_object *json,
 	struct sr_prefix *srp;
 	struct interface *itf;
 	struct sbuf sbuf;
-	char pref[19];
 	char sid[22];
-	char label[8];
+	char op[32];
 	char buf[PREFIX2STR_BUFFER];
 	int value;
-	json_object *json_node = NULL, *json_algo, *json_obj;
-	json_object *json_prefix = NULL, *json_link = NULL;
 
 	/* Sanity Check */
 	if (srn == NULL)
@@ -1805,75 +1893,32 @@ static void show_sr_node(struct vty *vty, struct json_object *json,
 
 	sbuf_init(&sbuf, NULL, 0);
 
-	if (json) {
-		json_node = json_object_new_object();
-		json_object_string_add(json_node, "routerID",
-				       print_sys_hostname(srn->sysid));
-		json_object_int_add(json_node, "srgbSize",
-				    srn->cap.srgb.range_size);
-		json_object_int_add(json_node, "srgbLabel",
-				    srn->cap.srgb.lower_bound);
-		json_algo = json_object_new_array();
-		json_object_object_add(json_node, "algorithms", json_algo);
-		for (int i = 0; i < SR_ALGORITHM_COUNT; i++) {
-			if (srn->cap.algo[i] == SR_ALGORITHM_UNSET)
-				continue;
-			json_obj = json_object_new_object();
-			char tmp[2];
+	sbuf_push(&sbuf, 0, "SR-Node: %s", print_sys_hostname(srn->sysid));
+	sbuf_push(&sbuf, 0, "\tSRGB (Size/Label): %u/%u",
+		  srn->cap.srgb.range_size, srn->cap.srgb.lower_bound);
+	sbuf_push(&sbuf, 0, "\tAlgorithm(s): %s",
+		  srn->cap.algo[0] == SR_ALGORITHM_SPF ? "SPF" : "S-SPF");
+	for (int i = 1; i < SR_ALGORITHM_COUNT; i++) {
+		if (srn->cap.algo[i] == SR_ALGORITHM_UNSET)
+			continue;
+		sbuf_push(&sbuf, 0, "/%s",
+			  srn->cap.algo[i] == SR_ALGORITHM_SPF ? "SPF"
+							       : "S-SPF");
+	}
+	if (srn->cap.msd != 0)
+		sbuf_push(&sbuf, 0, "\tMSD: %u", srn->cap.msd);
 
-			snprintf(tmp, 2, "%u", i);
-			json_object_string_add(
-				json_obj, tmp,
-				srn->cap.algo[i] == SR_ALGORITHM_SPF ? "SPF"
-								     : "S-SPF");
-			json_object_array_add(json_algo, json_obj);
-		}
-		if (srn->cap.msd != 0)
-			json_object_int_add(json_node, "nodeMsd",
-					    srn->cap.msd);
-	} else {
-		sbuf_push(&sbuf, 0, "SR-Node: %s",
-			  print_sys_hostname(srn->sysid));
-		sbuf_push(&sbuf, 0, "\tSRGB (Size/Label): %u/%u",
-			  srn->cap.srgb.range_size, srn->cap.srgb.lower_bound);
-		sbuf_push(&sbuf, 0, "\tAlgorithm(s): %s",
-			srn->cap.algo[0] == SR_ALGORITHM_SPF ? "SPF" : "S-SPF");
-		for (int i = 1; i < SR_ALGORITHM_COUNT; i++) {
-			if (srn->cap.algo[i] == SR_ALGORITHM_UNSET)
-				continue;
-			sbuf_push(&sbuf, 0, "/%s",
-				srn->cap.algo[i] == SR_ALGORITHM_SPF ? "SPF"
-								 : "S-SPF");
-		}
-		if (srn->cap.msd != 0)
-			sbuf_push(&sbuf, 0, "\tMSD: %u", srn->cap.msd);
-	}
+	sbuf_push(&sbuf, 0,
+		  "\n\n                Prefix       Node or Adj. SID  "
+		  "     Label Operation  Interface  Nexthop\n");
+	sbuf_push(&sbuf, 0,
+		  "----------------------  ---------------------  "
+		  "--------------------  ---------  ----------\n");
 
-	if (!json) {
-		sbuf_push(&sbuf, 0,
-			"\n\n    Prefix or Link       Node or Adj. SID  "
-			"Label In  Label Out  Interface          Nexthop\n");
-		sbuf_push(&sbuf, 0,
-			"------------------  ---------------------  --------  "
-			"---------  ---------  ---------------\n");
-	}
-	for (ALL_LIST_ELEMENTS_RO(srn->pref_sids, node, srp)) {
-		if (json) {
-			if (!json_prefix) {
-				json_prefix = json_object_new_array();
-				json_object_object_add(json_node,
-						       "extendedPrefix",
-						       json_prefix);
-			}
-			show_sr_prefix(NULL, json_prefix, srp);
-		} else
-			show_sr_prefix(&sbuf, NULL, srp);
-	}
+	for (ALL_LIST_ELEMENTS_RO(srn->pref_sids, node, srp))
+		show_sr_prefix(&sbuf, srp);
 
 	for (ALL_LIST_ELEMENTS_RO(srn->adj_sids, node, sra)) {
-		inet_ntop(sra->prefix.family, &sra->prefix.u.prefix, buf,
-			  PREFIX2STR_BUFFER);
-		snprintf(pref, 19, "%s/%u", buf, sra->prefix.prefixlen);
 		if (sra->adj_sid)
 			value = sra->adj_sid->sid;
 		else if (sra->lan_sid)
@@ -1881,10 +1926,6 @@ static void show_sr_node(struct vty *vty, struct json_object *json,
 		else
 			value = 0;
 		snprintf(sid, 22, "SR Adj. (lbl %u)", value);
-		if (sra->nhlfe.label_out == MPLS_LABEL_IMPLICIT_NULL)
-			sprintf(label, "pop");
-		else
-			sprintf(label, "%u", sra->nhlfe.label_out);
 		itf = if_lookup_by_index(sra->nhlfe.ifindex, VRF_DEFAULT);
 		if (sra->prefix.family == AF_INET)
 			inet_ntop(AF_INET, &sra->nhlfe.nexthop, buf,
@@ -1892,54 +1933,31 @@ static void show_sr_node(struct vty *vty, struct json_object *json,
 		else
 			inet_ntop(AF_INET6, &sra->nhlfe.nexthop6, buf,
 				  PREFIX2STR_BUFFER);
-		if (json) {
-			if (!json_link) {
-				json_link = json_object_new_array();
-				json_object_object_add(
-					json_node, "extendedLink", json_link);
-			}
-			json_obj = json_object_new_object();
-			json_object_string_add(json_obj, "prefix", pref);
-			json_object_int_add(json_obj, "sid", value);
-			json_object_int_add(json_obj, "inputLabel",
-					    sra->nhlfe.label_in);
-			json_object_string_add(json_obj, "outputLabel", label);
-			json_object_string_add(json_obj, "interface",
-					       itf ? itf->name : "-");
-			json_object_string_add(json_obj, "nexthop", buf);
-			json_object_array_add(json_link, json_obj);
 
-		} else {
-			sbuf_push(&sbuf, 0, "%18s  %21s  %8u  %9s  %9s  %15s\n",
-				  pref, sid, sra->nhlfe.label_in, label,
-				  itf ? itf->name : "-", buf);
-		}
+		sbuf_push(&sbuf, 24, "%21s  %20s  %9s  %s\n", sid,
+			  sr_op2str(op, 32, sra->nhlfe.label_in,
+				    sra->nhlfe.label_out),
+			  itf ? itf->name : "-", buf);
 	}
-	if (json)
-		json_object_array_add(json, json_node);
-	else
-		vty_out(vty, "%s\n", sbuf_buf(&sbuf));
+
+	vty_out(vty, "%s\n", sbuf_buf(&sbuf));
 
 	sbuf_free(&sbuf);
 }
 
 DEFUN (show_isis_srdb,
        show_isis_srdb_cmd,
-       "show isis database segment-routing [WORD] [json]",
+       "show isis database segment-routing [WORD]",
        SHOW_STR
        PROTO_HELP
        "Database summary\n"
        "Show Segment Routing Data Base\n"
-       "Advertising SR node ID (as SYS-ID address)\n"
-       JSON_STR)
+       "Advertising SR node ID (as SYS-ID address)\n")
 {
 	int idx = 0;
 	struct sr_node *srn;
-	bool uj = use_json(argc, argv);
 	bool alone = false;
 	char *sr_id;
-	json_object *json = NULL, *json_area = NULL;
-	json_object *json_area_array = NULL, *json_node_array = NULL;
 	struct isis_dynhn *dynhn;
 	uint8_t sysid[ISIS_SYS_ID_LEN];
 	struct listnode *node;
@@ -1949,12 +1967,6 @@ DEFUN (show_isis_srdb,
 		return CMD_SUCCESS;
 
 	sr_id = argv_find(argv, argc, "WORD", &idx) ? argv[idx]->arg : NULL;
-
-	if (uj) {
-		json = json_object_new_object();
-		json_area_array = json_object_new_array();
-		json_object_object_add(json, "Area", json_area_array);
-	}
 
 	for (ALL_LIST_ELEMENTS_RO(isis->area_list, node, area)) {
 		vty_out(vty, "Area %s:\n",
@@ -1988,21 +2000,9 @@ DEFUN (show_isis_srdb,
 			alone = true;
 		}
 
-		if (uj) {
-			json_area = json_object_new_object();
-			json_object_string_add(json_area, "name",
-					       area->area_tag);
-			json_node_array = json_object_new_array();
-			json_object_string_add(
-				json_area, "srdbID",
-				print_sys_hostname(area->srdb.self->sysid));
-			json_object_object_add(json_area, "srNodes",
-					       json_node_array);
-		} else {
-			vty_out(vty,
-				"\n\t\tISIS Segment Routing database for Node %s\n\n",
-				print_sys_hostname(area->srdb.self->sysid));
-		}
+		vty_out(vty,
+			"\n\t\tISIS Segment Routing database for Node %s\n\n",
+			print_sys_hostname(area->srdb.self->sysid));
 
 		if (alone) {
 			/* Get the SR Node from the SRDB */
@@ -2015,32 +2015,14 @@ DEFUN (show_isis_srdb,
 			if (srn == NULL)
 				continue;
 
-			show_sr_node(vty, json_node_array, srn);
-			if (uj) {
-				json_object_array_add(json_area_array,
-						      json_area);
-				vty_out(vty, "%s\n",
-					json_object_to_json_string_ext(
-						json, JSON_C_TO_STRING_PRETTY));
-				json_object_free(json);
-			}
+			show_sr_node(vty, srn);
 			return CMD_SUCCESS;
 		}
 
 		/* No parameters have been provided, Iterate through all the
 		 * SRDB */
-		if (uj) {
-			RB_FOREACH(srn, srdb_node_head, &area->srdb.sr_nodes)
-				show_sr_node(NULL, json, srn);
-			json_object_array_add(json_area_array, json_area);
-			vty_out(vty, "%s\n",
-				json_object_to_json_string_ext(
-					json, JSON_C_TO_STRING_PRETTY));
-			json_object_free(json);
-		} else {
-			RB_FOREACH(srn, srdb_node_head, &area->srdb.sr_nodes)
-				show_sr_node(vty, NULL, srn);
-		}
+		RB_FOREACH (srn, srdb_node_head, &area->srdb.sr_nodes)
+			show_sr_node(vty, srn);
 	}
 	return CMD_SUCCESS;
 }

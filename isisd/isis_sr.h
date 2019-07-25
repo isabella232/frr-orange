@@ -4,9 +4,10 @@
  *
  * Module name: Segment Routing header definitions
  *
- * Author: Olivier Dugeon <olivier.dugeon@orange.com>
+  * Copyright (C) 2019 Orange Labs http://www.orange.com
  *
- * Copyright (C) 2019 Orange Labs http://www.orange.com
+ * Author: Olivier Dugeon <olivier.dugeon@orange.com>
+ * Contributor: Renato Westphal <renato@opensourcerouting.org> for NetDef
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -136,6 +137,9 @@ struct sr_nhlfe {
 	mpls_label_t label_out;
 };
 
+#define LABELS_FTN      0x01
+#define LABELS_NEXTHOP  0x02
+
 /* Structure aggregating all Segment Routing Adjacency information */
 /* which are generally advertised by pair: primary + backup */
 struct sr_adjacency {
@@ -210,9 +214,8 @@ struct isis_sr_db {
 	 */
 	uint32_t lower_bound;
 	uint32_t upper_bound;
-	/* Label Manager flag to indicate that ranges are reserved */
+	/* Label Manager flag to indicate that range is reserved */
 	bool srgb_lm;
-	bool adj_lm;
 
 	/* Maximum SID Depth supported by the node */
 	uint8_t msd;
@@ -220,7 +223,9 @@ struct isis_sr_db {
 
 /* Prototypes definition */
 /* Segment Routing initialization functions */
-extern void isis_sr_init(struct isis_area *area);
+extern void isis_sr_init(void);
+extern void isis_sr_create(struct isis_area *area);
+extern void isis_sr_destroy(struct isis_area *area);
 extern void isis_sr_start(struct isis_area *area);
 extern void isis_sr_stop(struct isis_area *area);
 extern void isis_sr_term(void);
@@ -235,6 +240,8 @@ extern struct sr_prefix *isis_sr_prefix_find(const struct isis_area *area,
 					     const struct prefix *prefix);
 extern void isis_sr_prefix_update(struct isis_area *area,
 				  struct prefix *prefix);
+extern void isis_sr_update_adj(struct isis_adjacency *adj, uint8_t family,
+			       bool adj_up);
 /* Segment Routing re-routing function */
 extern void isis_sr_update_timer_add(struct isis_area *area);
 

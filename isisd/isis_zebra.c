@@ -404,12 +404,13 @@ void isis_zebra_redistribute_unset(afi_t afi, int type)
 				     type, 0, VRF_DEFAULT);
 }
 
-/* Label Manager Requests. */
+/* Label Manager Requests for Segment Routing */
 int isis_zebra_request_label_range(uint32_t base, uint32_t chunk_size)
 {
 	int ret;
 	uint32_t start, end;
 
+	sr_debug("Reserve Label Chunk %d-%d", base, chunk_size);
 	ret = lm_get_label_chunk(zclient_sync, 0, base, chunk_size, &start,
 				 &end);
 	if (ret < 0) {

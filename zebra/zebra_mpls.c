@@ -2542,14 +2542,17 @@ static bool mpls_ftn_update_nexthop(int add, struct nexthop *nexthop,
  */
 int mpls_ftn_update(int add, struct zebra_vrf *zvrf, enum lsp_types_t type,
 		    struct prefix *prefix, enum nexthop_types_t gtype,
-		    union g_addr *gate, ifindex_t ifindex, uint8_t distance,
+		    union g_addr *gate, ifindex_t ifindex, uint16_t instance,
 		    mpls_label_t out_label)
 {
 	struct route_table *table;
 	struct route_node *rn;
 	struct route_entry *re;
 	struct nexthop *nexthop;
+	uint8_t route_type;
 	bool found;
+
+	route_type = re_type_from_lsp_type(type);
 
 	/* Lookup table.  */
 	table = zebra_vrf_table(family2afi(prefix->family), SAFI_UNICAST,
@@ -2562,7 +2565,7 @@ int mpls_ftn_update(int add, struct zebra_vrf *zvrf, enum lsp_types_t type,
 	RNODE_FOREACH_RE (rn, re) {
 		if (CHECK_FLAG(re->status, ROUTE_ENTRY_REMOVED))
 			continue;
-		if (re->distance == distance)
+		if (re->type == route_type && re->instance == instance)
 			break;
 	}
 

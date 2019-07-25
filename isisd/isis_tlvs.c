@@ -326,18 +326,19 @@ static void format_item_ext_subtlvs(struct isis_ext_subtlvs *exts,
 	if IS_SUBTLV(exts, EXT_PKT_LOSS)
 		sbuf_push(buf, indent, "%s Link Packet Loss: %g (%%)\n",
 			  IS_ANORMAL(exts->pkt_loss) ? "Anomalous" : "Normal",
-			  (float )((exts->pkt_loss& TE_EXT_MASK) * LOSS_PRECISION));
+			  (float)((exts->pkt_loss & TE_EXT_MASK)
+				  * LOSS_PRECISION));
 	if IS_SUBTLV(exts, EXT_RES_BW)
 		sbuf_push(buf, indent,
-			  "Unidirectional Residual Bandwidth: %g (Bytes/sec)\n",
+			  "Unidir. Residual Bandwidth: %g (Bytes/sec)\n",
 			  exts->res_bw);
 	if IS_SUBTLV(exts, EXT_AVA_BW)
 		sbuf_push(buf, indent,
-			  "Unidirectional Available Bandwidth: %g (Bytes/sec)\n",
+			  "Unidir. Available Bandwidth: %g (Bytes/sec)\n",
 			  exts->ava_bw);
 	if IS_SUBTLV(exts, EXT_USE_BW)
 		sbuf_push(buf, indent,
-			  "Unidirectional Utilized Bandwidth: %g (Bytes/sec)\n",
+			  "Unidir. Utilized Bandwidth: %g (Bytes/sec)\n",
 			  exts->use_bw);
 }
 
@@ -4350,6 +4351,13 @@ static void tlvs_ipv4_addresses_to_adj(struct isis_tlvs *tlvs,
 				       struct isis_adjacency *adj,
 				       bool *changed)
 {
+	bool ipv4_enabled = false;
+
+	if (adj->ipv4_address_count == 0 && tlvs->ipv4_address.count > 0)
+		ipv4_enabled = true;
+	else if (adj->ipv4_address_count > 0 && tlvs->ipv4_address.count == 0)
+		isis_sr_update_adj(adj, AF_INET, false);
+
 	if (adj->ipv4_address_count != tlvs->ipv4_address.count) {
 		*changed = true;
 		adj->ipv4_address_count = tlvs->ipv4_address.count;
@@ -4373,12 +4381,22 @@ static void tlvs_ipv4_addresses_to_adj(struct isis_tlvs *tlvs,
 		*changed = true;
 		adj->ipv4_addresses[i] = addr->addr;
 	}
+
+	if (ipv4_enabled)
+		isis_sr_update_adj(adj, AF_INET, true);
 }
 
 static void tlvs_ipv6_addresses_to_adj(struct isis_tlvs *tlvs,
 				       struct isis_adjacency *adj,
 				       bool *changed)
 {
+	bool ipv6_enabled = false;
+
+	if (adj->ipv6_address_count == 0 && tlvs->ipv6_address.count > 0)
+		ipv6_enabled = true;
+	else if (adj->ipv6_address_count > 0 && tlvs->ipv6_address.count == 0)
+		isis_sr_update_adj(adj, AF_INET6, false);
+
 	if (adj->ipv6_address_count != tlvs->ipv6_address.count) {
 		*changed = true;
 		adj->ipv6_address_count = tlvs->ipv6_address.count;
@@ -4402,6 +4420,9 @@ static void tlvs_ipv6_addresses_to_adj(struct isis_tlvs *tlvs,
 		*changed = true;
 		adj->ipv6_addresses[i] = addr->addr;
 	}
+
+	if (ipv6_enabled)
+		isis_sr_update_adj(adj, AF_INET6, true);
 }
 
 void isis_tlvs_to_adj(struct isis_tlvs *tlvs, struct isis_adjacency *adj,

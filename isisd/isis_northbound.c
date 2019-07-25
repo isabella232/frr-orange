@@ -1672,15 +1672,12 @@ static int isis_instance_segment_routing_prefix_sid_map_prefix_sid_destroy(
 	enum nb_event event, const struct lyd_node *dnode)
 {
 	struct sr_prefix *srp;
-	struct isis_area *area;
 
 	if (event != NB_EV_APPLY)
 		return NB_OK;
 
 	srp = nb_running_unset_entry(dnode);
-	area = srp->srn->area;
 	isis_sr_prefix_del(srp);
-	lsp_regenerate_schedule(area, area->is_type, 0);
 
 	return NB_OK;
 }
@@ -1690,18 +1687,14 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_apply_finish(
 	const struct lyd_node *dnode)
 {
 	struct sr_prefix *srp;
-	struct isis_area *area;
 
 	srp = nb_running_get_entry(dnode, NULL, true);
-	if (srp) {
+	if (srp)
 		isis_sr_prefix_commit(srp);
-		area = srp->srn->area;
-		lsp_regenerate_schedule(area, area->is_type, 0);
-	} else {
+	else
 		flog_warn(
 			EC_LIB_NB_CB_CONFIG_VALIDATE,
 			"Invalid Prefix SID");
-	}
 }
 
 /*
@@ -1752,17 +1745,7 @@ isis_instance_segment_routing_prefix_sid_map_prefix_sid_sid_value_modify(
 
 	srp = nb_running_get_entry(dnode, NULL, true);
 	sid = yang_dnode_get_uint32(dnode, NULL);
-
-	/* Verify that SID index is less than SRGB upper bound */
-	if (!CHECK_FLAG(srp->sid.flags, ISIS_PREFIX_SID_VALUE)
-	    && (sid > srp->srn->area->srdb.upper_bound - 1)) {
-		flog_warn(EC_LIB_NB_CB_CONFIG_VALIDATE,
-			  "Index is out of SRGB range");
-		isis_sr_prefix_del(srp);
-		return NB_ERR_VALIDATION;
-	} else {
-		srp->sid.value = sid;
-	}
+	srp->sid.value = sid;
 
 	return NB_OK;
 }

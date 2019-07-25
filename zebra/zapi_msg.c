@@ -1816,18 +1816,25 @@ static void zread_mpls_labels(ZAPI_HANDLER_ARGS)
 		return;
 	}
 
+	struct in6_addr null_addr;
+	memset(&null_addr, 0, 16);
+	if (gate.ipv4.s_addr == 0 || memcmp(&gate.ipv6, &null_addr, 16) == 0)
+		gtype = NEXTHOP_TYPE_IFINDEX;
+
 	if (!mpls_enabled)
 		return;
 
 	if (hdr->command == ZEBRA_MPLS_LABELS_ADD) {
 		mpls_lsp_install(zvrf, type, in_label, out_label, gtype, &gate,
 				 ifindex);
-		mpls_ftn_update(1, zvrf, type, &prefix, gtype, &gate, ifindex,
-				distance, out_label);
+		if (prefix.prefixlen != 0)
+			mpls_ftn_update(1, zvrf, type, &prefix, gtype, &gate,
+					ifindex, distance, out_label);
 	} else if (hdr->command == ZEBRA_MPLS_LABELS_DELETE) {
 		mpls_lsp_uninstall(zvrf, type, in_label, gtype, &gate, ifindex);
-		mpls_ftn_update(0, zvrf, type, &prefix, gtype, &gate, ifindex,
-				distance, out_label);
+		if (prefix.prefixlen != 0)
+			mpls_ftn_update(0, zvrf, type, &prefix, gtype, &gate,
+					ifindex, distance, out_label);
 	}
 stream_failure:
 	return;

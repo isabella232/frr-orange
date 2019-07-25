@@ -255,6 +255,7 @@ int main(int argc, char **argv, char **envp)
 
 	/* create the global 'isis' instance */
 	isis_new(instance);
+	isis_sr_init();
 
 	isis_zebra_init(master, instance);
 	isis_bfd_init();

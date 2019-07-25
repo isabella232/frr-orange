@@ -285,7 +285,7 @@ extern struct thread_master *master;
 #define DEBUG_FLOODING                   (1<<9)
 #define DEBUG_BFD                        (1<<10)
 #define DEBUG_TX_QUEUE                   (1<<11)
-#define DEBUG_SR                         (1<<12)
+#define DEBUG_SR_EVENTS                  (1<<12)
 
 #define lsp_debug(...)                                                         \
 	do {                                                                   \
@@ -301,7 +301,7 @@ extern struct thread_master *master;
 
 #define sr_debug(...)                                                          \
 	do {                                                                   \
-		if (isis->debugs & DEBUG_SR)                                   \
+		if (isis->debugs & DEBUG_SR_EVENTS)                                   \
 			zlog_debug(__VA_ARGS__);                               \
 	} while (0)
 

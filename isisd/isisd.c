@@ -134,7 +134,7 @@ struct isis_area *isis_area_create(const char *area_tag)
 	thread_add_timer(master, lsp_tick, area, 1, &area->t_tick);
 	flags_initialize(&area->flags);
 
-	isis_sr_init(area);
+	isis_sr_create(area);
 
 	/*
 	 * Default values
@@ -280,7 +280,7 @@ int isis_area_destroy(const char *area_tag)
 	isis_area_invalidate_routes(area, area->is_type);
 	isis_area_verify_routes(area);
 
-	isis_sr_stop(area);
+	isis_sr_destroy(area);
 
 	spftree_area_del(area);
 
@@ -776,7 +776,7 @@ void print_debug(struct vty *vty, int flags, int onoff)
 		vty_out(vty, "IS-IS Flooding debugging is %s\n", onoffs);
 	if (flags & DEBUG_BFD)
 		vty_out(vty, "IS-IS BFD debugging is %s\n", onoffs);
-	if (flags & DEBUG_SR)
+	if (flags & DEBUG_SR_EVENTS)
 		vty_out(vty, "IS-IS Segment Routing debugging is %s\n", onoffs);
 }
 
@@ -851,8 +851,8 @@ static int config_write_debug(struct vty *vty)
 		vty_out(vty, "debug " PROTO_NAME " bfd\n");
 		write++;
 	}
-	if (flags & DEBUG_SR) {
-		vty_out(vty, "debug " PROTO_NAME " sr\n");
+	if (flags & DEBUG_SR_EVENTS) {
+		vty_out(vty, "debug " PROTO_NAME " sr-events\n");
 		write++;
 	}
 	write += spf_backoff_write_config(vty);
@@ -1184,29 +1184,29 @@ DEFUN (no_debug_isis_bfd,
 	return CMD_SUCCESS;
 }
 
-DEFUN (debug_isis_sr,
-       debug_isis_sr_cmd,
-       "debug " PROTO_NAME " sr",
+DEFUN (debug_isis_srevents,
+       debug_isis_srevents_cmd,
+       "debug " PROTO_NAME " sr-events",
        DEBUG_STR
        PROTO_HELP
        PROTO_NAME " interaction with Segment Routing\n")
 {
-	isis->debugs |= DEBUG_SR;
-	print_debug(vty, DEBUG_SR, 1);
+	isis->debugs |= DEBUG_SR_EVENTS;
+	print_debug(vty, DEBUG_SR_EVENTS, 1);
 
 	return CMD_SUCCESS;
 }
 
-DEFUN (no_debug_isis_sr,
-       no_debug_isis_sr_cmd,
-       "no debug " PROTO_NAME " sr",
+DEFUN (no_debug_isis_srevents,
+       no_debug_isis_srevents_cmd,
+       "no debug " PROTO_NAME " sr-events",
        NO_STR
        UNDEBUG_STR
        PROTO_HELP
        PROTO_NAME " interaction with Segment Routing\n")
 {
-	isis->debugs &= ~DEBUG_SR;
-	print_debug(vty, DEBUG_SR, 0);
+	isis->debugs &= ~DEBUG_SR_EVENTS;
+	print_debug(vty, DEBUG_SR_EVENTS, 0);
 
 	return CMD_SUCCESS;
 }
@@ -2235,8 +2235,8 @@ void isis_init(void)
 	install_element(ENABLE_NODE, &no_debug_isis_lsp_sched_cmd);
 	install_element(ENABLE_NODE, &debug_isis_bfd_cmd);
 	install_element(ENABLE_NODE, &no_debug_isis_bfd_cmd);
-	install_element(ENABLE_NODE, &debug_isis_sr_cmd);
-	install_element(ENABLE_NODE, &no_debug_isis_sr_cmd);
+	install_element(ENABLE_NODE, &debug_isis_srevents_cmd);
+	install_element(ENABLE_NODE, &no_debug_isis_srevents_cmd);
 
 	install_element(CONFIG_NODE, &debug_isis_adj_cmd);
 	install_element(CONFIG_NODE, &no_debug_isis_adj_cmd);
@@ -2262,8 +2262,8 @@ void isis_init(void)
 	install_element(CONFIG_NODE, &no_debug_isis_lsp_sched_cmd);
 	install_element(CONFIG_NODE, &debug_isis_bfd_cmd);
 	install_element(CONFIG_NODE, &no_debug_isis_bfd_cmd);
-	install_element(CONFIG_NODE, &debug_isis_sr_cmd);
-	install_element(CONFIG_NODE, &no_debug_isis_sr_cmd);
+	install_element(CONFIG_NODE, &debug_isis_srevents_cmd);
+	install_element(CONFIG_NODE, &no_debug_isis_srevents_cmd);
 
 	install_default(ROUTER_NODE);
 
