@@ -775,7 +775,6 @@ static void lsp_build_ext_reach_ipv4(struct isis_lsp *lsp,
 							metric);
 		if (area->newmetric) {
 			struct sr_prefix *srp;
-
 			srp = isis_sr_prefix_find(area, (struct prefix *)ipv4);
 
 			isis_tlvs_add_extended_ip_reach(lsp->tlvs, ipv4,
