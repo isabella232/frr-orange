@@ -1,5 +1,13 @@
+FRRouting BGP-LS Development Branch
+===================================
+
+This special FRRouting branch is dedicated to the development of BGP-LS.
+The code located under this branch is a **Work In Progress**. The code may
+compile or not, may run or not. In any case, this code **MUST NOT BE USED IN
+PRODUCTION**.
+
 FRRouting
-=========
+---------
 
 FRR is free software that implements and manages various IPv4 and IPv6 routing
 protocols. It runs on nearly all distributions of Linux and BSD as well as
