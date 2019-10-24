@@ -164,29 +164,38 @@ Development Branches
 --------------------
 
 Occassionally the community will desire the ability to work together
-on a feature that is considered useful to FRR.  In this case the
+on a feature that is considered useful to FRR. In this case the
 parties may ask the Maintainers for the creation of a development
-branch in the main FRR repository.  Requirements for this to happen
+branch in the main FRR repository. Requirements for this to happen
 are:
 
 - A one paragraph description of the feature being implemented to
-  allow for the facilitation of discussion about the feature.  This
-  might include pointers to relevant RFC's or presentations that
-  explain what is planned.  This is intended to set a somewhat
-  low bar for organization.
-- A branch maintainer must be named.  This person is responsible for
-  keeping the branch up to date, and general communication about the
-  project with the other FRR Maintainers.  Additionally this person
-  must already be a FRR Maintainer.
+  allow for the facilitation of discussion about the feature.
+  This might include pointers to relevant RFC's or presentations
+  that explain what is planned or a link to requested feature
+  (see https://github.com/FRRouting/frr/wiki/Feature-Requests).
+  This is intended to set a somewhat low bar for organization.
+- A person from the FRR Maintainers is designated to shepherd
+  the development on this branch. The shepherded maintainer is
+  responsible for keeping the branch up to date, and general
+  communication about the project with the other FRR Maintainers.
+- People interested to contribute to an advance feature in FRR
+  should have a look to Feature-Requests wiki page where
+  development branch are listed.
 - Commits to this branch must follow the normal PR and commit process
-  as outlined in other areas of this document.  The goal of this is
+  as outlined in other areas of this document. The goal of this is
   to prevent the current state where large features are submitted
-  and are so large they are difficult to review.
+  and are so large they are difficult to review. Failed report from
+  the CI/CD is acceptable only for the topotest part during the branch
+  development but must be conform before and the end of development.
 
 After a development branch has completed the work together, a final
-review can be made and the branch merged into master.  If a development
-branch is becomes un-maintained or not being actively worked on after
-a year then the Maintainers can decide to remove the branch.
+review can be made and the branch merged into master (a final rebase
+against master should be perform to avoid merge conflict). Once the
+branch is merged, it is removed from the FRR repo unless otherwise
+specified. If a development branch is becomes un-maintained or not
+being actively worked on after 3 months then the Maintainers can
+decide to remove the branch.
 
 Changelog
 ---------
