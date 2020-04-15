@@ -21,6 +21,7 @@
 
 #include "libfrr.h"
 #include "version.h"
+#include "defaults.h"
 #include "log.h"
 #include "lib_errors.h"
 #include "command.h"
@@ -432,12 +433,12 @@ void nb_cli_show_config_prepare(struct nb_config *config, bool with_defaults)
 	lyd_schema_sort(config->dnode, 1);
 
 	/*
-	 * When "with-defaults" is used, call lyd_validate() only to create
-	 * default child nodes, ignoring any possible validation error. This
-	 * doesn't need to be done when displaying the running configuration
-	 * since it's always fully validated.
+	 * Call lyd_validate() only to create default child nodes, ignoring
+	 * any possible validation error. This doesn't need to be done when
+	 * displaying the running configuration since it's always fully
+	 * validated.
 	 */
-	if (with_defaults && config != running_config)
+	if (config != running_config)
 		(void)lyd_validate(&config->dnode,
 				   LYD_OPT_CONFIG | LYD_OPT_WHENAUTODEL,
 				   ly_native_ctx);
@@ -486,7 +487,7 @@ static void nb_cli_show_config_cmds(struct vty *vty, struct nb_config *config,
 	vty_out(vty, "Configuration:\n");
 	vty_out(vty, "!\n");
 	vty_out(vty, "frr version %s\n", FRR_VER_SHORT);
-	vty_out(vty, "frr defaults %s\n", DFLT_NAME);
+	vty_out(vty, "frr defaults %s\n", frr_defaults_profile());
 
 	LY_TREE_FOR (config->dnode, root)
 		nb_cli_show_dnode_cmds(vty, root, with_defaults);

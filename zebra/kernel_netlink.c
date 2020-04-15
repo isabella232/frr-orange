@@ -99,6 +99,9 @@ static const struct message nlmsg_str[] = {{RTM_NEWROUTE, "RTM_NEWROUTE"},
 					   {RTM_NEWRULE, "RTM_NEWRULE"},
 					   {RTM_DELRULE, "RTM_DELRULE"},
 					   {RTM_GETRULE, "RTM_GETRULE"},
+					   {RTM_NEWNEXTHOP, "RTM_NEWNEXTHOP"},
+					   {RTM_DELNEXTHOP, "RTM_DELNEXTHOP"},
+					   {RTM_GETNEXTHOP, "RTM_GETNEXTHOP"},
 					   {0}};
 
 static const struct message rtproto_str[] = {
@@ -228,12 +231,12 @@ static int netlink_socket(struct nlsock *nl, unsigned long groups,
 			return -1;
 		}
 
-		memset(&snl, 0, sizeof snl);
+		memset(&snl, 0, sizeof(snl));
 		snl.nl_family = AF_NETLINK;
 		snl.nl_groups = groups;
 
 		/* Bind the socket to the netlink structure for anything. */
-		ret = bind(sock, (struct sockaddr *)&snl, sizeof snl);
+		ret = bind(sock, (struct sockaddr *)&snl, sizeof(snl));
 	}
 
 	if (ret < 0) {
@@ -244,9 +247,9 @@ static int netlink_socket(struct nlsock *nl, unsigned long groups,
 	}
 
 	/* multiple netlink sockets will have different nl_pid */
-	namelen = sizeof snl;
+	namelen = sizeof(snl);
 	ret = getsockname(sock, (struct sockaddr *)&snl, (socklen_t *)&namelen);
-	if (ret < 0 || namelen != sizeof snl) {
+	if (ret < 0 || namelen != sizeof(snl)) {
 		flog_err_sys(EC_LIB_SOCKET, "Can't get %s socket name: %s",
 			     nl->name, safe_strerror(errno));
 		close(sock);
@@ -287,10 +290,26 @@ static int netlink_information_fetch(struct nlmsghdr *h, ns_id_t ns_id,
 		return netlink_neigh_change(h, ns_id);
 	case RTM_DELNEIGH:
 		return netlink_neigh_change(h, ns_id);
+	case RTM_GETNEIGH:
+		/*
+		 * Kernel in some situations when it expects
+		 * user space to resolve arp entries, we will
+		 * receive this notification.  As we don't
+		 * need this notification and as that
+		 * we don't want to spam the log file with
+		 * below messages, just ignore.
+		 */
+		if (IS_ZEBRA_DEBUG_KERNEL)
+			zlog_debug("Received RTM_GETNEIGH, ignoring");
+		break;
 	case RTM_NEWRULE:
 		return netlink_rule_change(h, ns_id, startup);
 	case RTM_DELRULE:
 		return netlink_rule_change(h, ns_id, startup);
+	case RTM_NEWNEXTHOP:
+		return netlink_nexthop_change(h, ns_id, startup);
+	case RTM_DELNEXTHOP:
+		return netlink_nexthop_change(h, ns_id, startup);
 	default:
 		/*
 		 * If we have received this message then
@@ -573,6 +592,7 @@ struct rtattr *addattr_nest(struct nlmsghdr *n, int maxlen, int type)
 	struct rtattr *nest = NLMSG_TAIL(n);
 
 	addattr_l(n, maxlen, type, NULL, 0);
+	nest->rta_type |= NLA_F_NESTED;
 	return nest;
 }
 
@@ -587,6 +607,7 @@ struct rtattr *rta_nest(struct rtattr *rta, int maxlen, int type)
 	struct rtattr *nest = RTA_TAIL(rta);
 
 	rta_addattr_l(rta, maxlen, type, NULL, 0);
+	nest->rta_type |= NLA_F_NESTED;
 	return nest;
 }
 
@@ -676,8 +697,7 @@ static void netlink_parse_extended_ack(struct nlmsghdr *h)
 			 * but noticing it for later.
 			 */
 			err_nlh = &err->msg;
-			zlog_debug("%s: Received %s extended Ack",
-				   __PRETTY_FUNCTION__,
+			zlog_debug("%s: Received %s extended Ack", __func__,
 				   nl_msg_type_to_str(err_nlh->nlmsg_type));
 		}
 	}
@@ -718,10 +738,10 @@ int netlink_parse_info(int (*filter)(struct nlmsghdr *, ns_id_t, int),
 
 	while (1) {
 		char buf[NL_RCV_PKT_BUF_SIZE];
-		struct iovec iov = {.iov_base = buf, .iov_len = sizeof buf};
+		struct iovec iov = {.iov_base = buf, .iov_len = sizeof(buf)};
 		struct sockaddr_nl snl;
 		struct msghdr msg = {.msg_name = (void *)&snl,
-				     .msg_namelen = sizeof snl,
+				     .msg_namelen = sizeof(snl),
 				     .msg_iov = &iov,
 				     .msg_iovlen = 1};
 		struct nlmsghdr *h;
@@ -763,7 +783,7 @@ int netlink_parse_info(int (*filter)(struct nlmsghdr *, ns_id_t, int),
 			return -1;
 		}
 
-		if (msg.msg_namelen != sizeof snl) {
+		if (msg.msg_namelen != sizeof(snl)) {
 			flog_err(EC_ZEBRA_NETLINK_LENGTH_ERROR,
 				 "%s sender address length error: length %d",
 				 nl->name, msg.msg_namelen);
@@ -823,7 +843,7 @@ int netlink_parse_info(int (*filter)(struct nlmsghdr *, ns_id_t, int),
 					if (IS_ZEBRA_DEBUG_KERNEL) {
 						zlog_debug(
 							"%s: %s ACK: type=%s(%u), seq=%u, pid=%u",
-							__FUNCTION__, nl->name,
+							__func__, nl->name,
 							nl_msg_type_to_str(
 								err->msg.nlmsg_type),
 							err->msg.nlmsg_type,
@@ -884,15 +904,20 @@ int netlink_parse_info(int (*filter)(struct nlmsghdr *, ns_id_t, int),
 							msg_type,
 							err->msg.nlmsg_seq,
 							err->msg.nlmsg_pid);
-				} else
-					flog_err(
-						EC_ZEBRA_UNEXPECTED_MESSAGE,
-						"%s error: %s, type=%s(%u), seq=%u, pid=%u",
-						nl->name,
-						safe_strerror(-errnum),
-						nl_msg_type_to_str(msg_type),
-						msg_type, err->msg.nlmsg_seq,
-						err->msg.nlmsg_pid);
+				} else {
+					if ((msg_type != RTM_GETNEXTHOP)
+					    || !startup)
+						flog_err(
+							EC_ZEBRA_UNEXPECTED_MESSAGE,
+							"%s error: %s, type=%s(%u), seq=%u, pid=%u",
+							nl->name,
+							safe_strerror(-errnum),
+							nl_msg_type_to_str(
+								msg_type),
+							msg_type,
+							err->msg.nlmsg_seq,
+							err->msg.nlmsg_pid);
+				}
 
 				return -1;
 			}
@@ -964,14 +989,14 @@ int netlink_talk_info(int (*filter)(struct nlmsghdr *, ns_id_t, int startup),
 	int save_errno = 0;
 	const struct nlsock *nl;
 
-	memset(&snl, 0, sizeof snl);
-	memset(&iov, 0, sizeof iov);
-	memset(&msg, 0, sizeof msg);
+	memset(&snl, 0, sizeof(snl));
+	memset(&iov, 0, sizeof(iov));
+	memset(&msg, 0, sizeof(msg));
 
 	iov.iov_base = n;
 	iov.iov_len = n->nlmsg_len;
 	msg.msg_name = (void *)&snl;
-	msg.msg_namelen = sizeof snl;
+	msg.msg_namelen = sizeof(snl);
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
 
@@ -1052,13 +1077,13 @@ int netlink_request(struct nlsock *nl, struct nlmsghdr *n)
 	n->nlmsg_pid = nl->snl.nl_pid;
 	n->nlmsg_seq = ++nl->seq;
 
-	memset(&snl, 0, sizeof snl);
+	memset(&snl, 0, sizeof(snl));
 	snl.nl_family = AF_NETLINK;
 
 	/* Raise capabilities and send message, then lower capabilities. */
 	frr_with_privs(&zserv_privs) {
 		ret = sendto(nl->sock, (void *)n, n->nlmsg_len, 0,
-			     (struct sockaddr *)&snl, sizeof snl);
+			     (struct sockaddr *)&snl, sizeof(snl));
 	}
 
 	if (ret < 0) {
@@ -1074,7 +1099,7 @@ int netlink_request(struct nlsock *nl, struct nlmsghdr *n)
    netlink_socket (). */
 void kernel_init(struct zebra_ns *zns)
 {
-	unsigned long groups;
+	uint32_t groups;
 #if defined SOL_NETLINK
 	int one, ret;
 #endif
@@ -1095,8 +1120,9 @@ void kernel_init(struct zebra_ns *zns)
 		RTMGRP_IPV6_IFADDR             |
 		RTMGRP_IPV4_MROUTE             |
 		RTMGRP_NEIGH                   |
-		(1 << (RTNLGRP_IPV4_RULE - 1)) |
-		(1 << (RTNLGRP_IPV6_RULE - 1));
+		((uint32_t) 1 << (RTNLGRP_IPV4_RULE - 1)) |
+		((uint32_t) 1 << (RTNLGRP_IPV6_RULE - 1)) |
+		((uint32_t) 1 << (RTNLGRP_NEXTHOP - 1));
 
 	snprintf(zns->netlink.name, sizeof(zns->netlink.name),
 		 "netlink-listen (NS %u)", zns->ns_id);

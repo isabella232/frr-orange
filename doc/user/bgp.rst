@@ -416,6 +416,24 @@ Require policy on EBGP
 
    This command requires incoming and outgoing filters to be applied for eBGP sessions. Without the incoming filter, no routes will be accepted. Without the outgoing filter, no routes will be announced.
 
+Reject routes with AS_SET or AS_CONFED_SET types
+------------------------------------------------
+
+.. index:: [no] bgp reject-as-sets
+.. clicmd:: [no] bgp reject-as-sets
+
+   This command enables rejection of incoming and outgoing routes having AS_SET or AS_CONFED_SET type.
+
+Disable checking if nexthop is connected on EBGP sessions
+---------------------------------------------------------
+
+.. index:: [no] bgp disable-ebgp-connected-route-check
+.. clicmd:: [no] bgp disable-ebgp-connected-route-check
+
+   This command is used to disable the connection verification process for EBGP peering sessions
+   that are reachable by a single hop but are configured on a loopback interface or otherwise
+   configured with a non-directly connected IP address.
+
 .. _bgp-route-flap-dampening:
 
 Route Flap Dampening
@@ -439,6 +457,9 @@ Route Flap Dampening
 
    The route-flap damping algorithm is compatible with :rfc:`2439`. The use of
    this command is not recommended nowadays.
+
+   At the moment, route-flap dampening is not working per VRF and is working only
+   for IPv4 unicast and multicast.
 
 .. seealso::
    https://www.ripe.net/publications/docs/ripe-378
@@ -683,6 +704,181 @@ from eBGP peers, :ref:`bgp-route-selection`.
    MED as an intra-AS metric to steer equal-length AS_PATH routes to, e.g.,
    desired exit points.
 
+
+.. _bgp-graceful-restart:
+
+Graceful Restart
+----------------
+
+BGP graceful restart functionality as defined in
+`RFC-4724 <https://tools.ietf.org/html/rfc4724/>`_ defines the mechanisms that
+allows BGP speaker to continue to forward data packets along known routes
+while the routing protocol information is being restored.
+
+
+Usually, when BGP on a router restarts, all the BGP peers detect that the
+session went down and then came up. This "down/up" transition results in a
+"routing flap" and causes BGP route re-computation, generation of BGP routing
+updates, and unnecessary churn to the forwarding tables.
+
+The following functionality is provided by graceful restart:
+
+1. The feature allows the restarting router to indicate to the helping peer the
+   routes it can preserve in its forwarding plane during control plane restart
+   by sending graceful restart capability in the OPEN message sent during
+   session establishment.
+2. The feature allows helping router to advertise to all other peers the routes
+   received from the restarting router which are preserved in the forwarding
+   plane of the restarting router during control plane restart.
+
+
+::
+
+
+
+ (R1)-----------------------------------------------------------------(R2)
+
+ 1. BGP Graceful Restart Capability exchanged between R1 & R2.
+
+ <--------------------------------------------------------------------->
+
+ 2. Kill BGP Process at R1.
+
+ ---------------------------------------------------------------------->
+
+ 3. R2 Detects the above BGP Restart & verifies BGP Restarting
+   Capability of R1.
+
+ 4. Start BGP Process at R1.
+
+ 5. Re-establish the BGP session between R1 & R2.
+
+ <--------------------------------------------------------------------->
+
+ 6. R2 Send initial route updates, followed by End-Of-Rib.
+
+ <----------------------------------------------------------------------
+
+ 7. R1 was waiting for End-Of-Rib from R2 & which has been received
+   now.
+
+ 8. R1 now runs BGP Best-Path algorithm. Send Initial BGP  Update,
+   followed by End-Of Rib
+
+ <--------------------------------------------------------------------->
+
+
+.. _bgp-end-of-rib-message:
+
+End-of-RIB (EOR) message
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+An UPDATE message with no reachable Network Layer Reachability  Information
+(NLRI) and empty withdrawn NLRI is specified as the End-of-RIB marker that can
+be used by a BGP speaker to indicate to its peer the completion of the initial
+routing update after the session is established.
+
+For the IPv4 unicast address family, the End-of-RIB marker is an UPDATE message
+with the minimum length. For any other address family, it is an UPDATE message
+that contains only the MP_UNREACH_NLRI attribute with no withdrawn routes for
+that <AFI, SAFI>.
+
+Although the End-of-RIB marker is specified for the purpose of BGP graceful
+restart, it is noted that the generation of such a marker upon completion of
+the initial update would be useful for routing convergence in general, and thus
+the practice is recommended.
+
+.. _bgp-route-selection-deferral-timer:
+
+Route Selection Deferral Timer
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Specifies the time the restarting router defers the route selection process
+after restart.
+
+Restarting Router : The usage of route election deferral timer is specified
+in https://tools.ietf.org/html/rfc4724#section-4.1
+
+Once the session between the Restarting Speaker and the Receiving Speaker is
+re-established, the Restarting Speaker will receive and process BGP messages
+from its peers.
+
+However, it MUST defer route selection for an address family until it either.
+
+1. Receives the End-of-RIB marker from all its peers (excluding the ones with
+   the "Restart State" bit set in the received capability and excluding the ones
+   that do not advertise the graceful restart capability).
+2. The Selection_Deferral_Timer timeout.
+
+.. index:: bgp graceful-restart select-defer-time (0-3600)
+.. clicmd:: bgp graceful-restart select-defer-time (0-3600)
+
+   This is command, will set deferral time to value specified.
+
+
+.. index:: bgp graceful-restart rib-stale-time (1-3600)
+.. clicmd:: bgp graceful-restart rib-stale-time (1-3600)
+
+   This is command, will set the time for which stale routes are kept in RIB.
+
+.. _bgp-per-peer-graceful-restart:
+
+BGP Per Peer Graceful Restart
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Ability to enable and disable graceful restart, helper and no GR at all mode
+functionality at peer level.
+
+So bgp graceful restart can be enabled at modes  global BGP level or at per
+peer level. There are two FSM, one for BGP GR global mode and other for peer
+per GR.
+
+Default global mode is helper and default peer per mode is inherit from global.
+If per peer mode is configured, the GR mode of this particular peer will
+override the global mode.
+
+.. _bgp-GR-global-mode-cmd:
+
+BGP GR Global Mode Commands
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. index:: bgp graceful-restart
+.. clicmd:: bgp graceful-restart
+
+   This command will enable BGP graceful restart ifunctionality at the global
+   level.
+
+.. index:: bgp graceful-restart disable
+.. clicmd:: bgp graceful-restart disable
+
+   This command will disable both the functionality graceful restart and helper
+   mode.
+
+
+.. _bgp-GR-peer-mode-cmd:
+
+BGP GR Peer Mode Commands
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. index:: neighbor A.B.C.D graceful-restart
+.. clicmd:: neighbor A.B.C.D graceful-restart
+
+   This command will enable BGP graceful restart ifunctionality at the peer
+   level.
+
+.. index:: neighbor A.B.C.D graceful-restart-helper
+.. clicmd:: neighbor A.B.C.D graceful-restart-helper
+
+   This command will enable BGP graceful restart helper only functionality
+   at the peer level.
+
+.. index:: neighbor A.B.C.D graceful-restart-disable
+.. clicmd:: neighbor A.B.C.D graceful-restart-disable
+
+   This command will disable the entire BGP graceful restart functionality
+   at the peer level.
+
+
 .. _bgp-network:
 
 Networks
@@ -727,6 +923,11 @@ Route Aggregation-IPv4 Address Family
 .. clicmd:: aggregate-address A.B.C.D/M route-map NAME
 
    Apply a route-map for an aggregated prefix.
+
+.. index:: aggregate-address A.B.C.D/M origin <egp|igp|incomplete>
+.. clicmd:: aggregate-address A.B.C.D/M origin <egp|igp|incomplete>
+
+   Override ORIGIN for an aggregated prefix.
 
 .. index:: aggregate-address A.B.C.D/M as-set
 .. clicmd:: aggregate-address A.B.C.D/M as-set
@@ -774,6 +975,11 @@ Route Aggregation-IPv6 Address Family
 .. clicmd:: aggregate-address X:X::X:X/M route-map NAME
 
    Apply a route-map for an aggregated prefix.
+
+.. index:: aggregate-address X:X::X:X/M origin <egp|igp|incomplete>
+.. clicmd:: aggregate-address X:X::X:X/M origin <egp|igp|incomplete>
+
+   Override ORIGIN for an aggregated prefix.
 
 .. index:: aggregate-address X:X::X:X/M as-set
 .. clicmd:: aggregate-address X:X::X:X/M as-set
@@ -836,10 +1042,15 @@ Redistribution
 
    Redistribute OSPF route to BGP process.
 
-.. index:: redistribute vpn
-.. clicmd:: redistribute vpn
+.. index:: redistribute vnc
+.. clicmd:: redistribute vnc
 
    Redistribute VNC routes to BGP process.
+
+.. index:: redistribute vnc-direct
+.. clicmd:: redistribute vnc-direct
+
+   Redistribute VNC direct (not via zebra) routes to BGP process.
 
 .. index:: update-delay MAX-DELAY
 .. clicmd:: update-delay MAX-DELAY
@@ -1004,6 +1215,14 @@ Configuring Peers
    keyword `all` is specified the modification is done also for routes learned
    via iBGP.
 
+.. index:: neighbor PEER attribute-unchanged [{as-path|next-hop|med}]
+.. clicmd:: neighbor PEER attribute-unchanged [{as-path|next-hop|med}]
+
+   This command specifies attributes to be left unchanged for advertisements
+   sent to a peer. Use this to leave the next-hop unchanged in ipv6
+   configurations, as the route-map directive to leave the next-hop unchanged
+   is only available for ipv4.
+
 .. index:: [no] neighbor PEER update-source <IFNAME|ADDRESS>
 .. clicmd:: [no] neighbor PEER update-source <IFNAME|ADDRESS>
 
@@ -1029,6 +1248,15 @@ Configuring Peers
 .. index:: neighbor PEER port PORT
 .. clicmd:: neighbor PEER port PORT
 
+.. index:: [no] neighbor PEER password PASSWORD
+.. clicmd:: [no] neighbor PEER password PASSWORD
+
+   Set a MD5 password to be used with the tcp socket that is being used
+   to connect to the remote peer.  Please note if you are using this
+   command with a large number of peers on linux you should consider
+   modifying the `net.core.optmem_max` sysctl to a larger value to
+   avoid out of memory errors from the linux kernel.
+
 .. index:: neighbor PEER send-community
 .. clicmd:: neighbor PEER send-community
 
@@ -1049,6 +1277,11 @@ Configuring Peers
    rejecting undesired prefixes. The prefix-list method is also much more
    granular and offers much smarter matching criterion than number of received
    prefixes, making it more suited to implementing policy.
+
+.. index:: [no] neighbor PEER maximum-prefix-out NUMBER
+.. clicmd:: [no] neighbor PEER maximum-prefix-out NUMBER
+
+   Sets a maximum number of prefixes we can send to a given peer.
 
 .. index:: [no] neighbor PEER local-as AS-NUMBER [no-prepend] [replace-as]
 .. clicmd:: [no] neighbor PEER local-as AS-NUMBER [no-prepend] [replace-as]
@@ -1136,6 +1369,14 @@ Peer Filtering
    By default, attribute modification via route-map policy out is not reflected
    on reflected routes. This option allows the modifications to be reflected as
    well. Once enabled, it affects all reflected routes.
+
+.. index:: [no] neighbor PEER sender-as-path-loop-detection
+.. clicmd:: [no] neighbor PEER sender-as-path-loop-detection
+
+   Enable the detection of sender side AS path loops and filter the
+   bad routes before they are sent.
+
+   This setting is disabled by default.
 
 .. _bgp-peer-group:
 
@@ -1756,6 +1997,18 @@ BGP Extended Communities in Route Map
 
    This command set Site of Origin value.
 
+.. index:: set extcommunity bandwidth <(1-25600) | cumulative | num-multipaths> [non-transitive]
+.. clicmd:: set extcommunity bandwidth <(1-25600) | cumulative | num-multipaths> [non-transitive]
+
+   This command sets the BGP link-bandwidth extended community for the prefix
+   (best path) for which it is applied. The link-bandwidth can be specified as
+   an ``explicit value`` (specified in Mbps), or the router can be told to use
+   the ``cumulative bandwidth`` of all multipaths for the prefix or to compute
+   it based on the ``number of multipaths``.  The link bandwidth extended
+   community is encoded as ``transitive`` unless the set command explicitly
+   configures it as ``non-transitive``.
+
+.. seealso:: :ref:`wecmp_linkbw`
 
 Note that the extended expanded community is only used for `match` rule, not for
 `set` actions.
@@ -2040,6 +2293,61 @@ address-family:
    the VPN RIB as intermediary.
 
 
+.. _bgp-evpn:
+
+Ethernet Virtual Network - EVPN
+-------------------------------
+
+.. _bgp-evpn-advertise-pip:
+
+EVPN advertise-PIP
+^^^^^^^^^^^^^^^^^^
+
+In a EVPN symmetric routing MLAG deployment, all EVPN routes advertised
+with anycast-IP as next-hop IP and anycast MAC as the Router MAC (RMAC - in
+BGP EVPN Extended-Community).
+EVPN picks up the next-hop IP from the VxLAN interface's local tunnel IP and
+the RMAC is obtained from the MAC of the L3VNI's SVI interface.
+Note: Next-hop IP is used for EVPN routes whether symmetric routing is
+deployed or not but the RMAC is only relevant for symmetric routing scenario.
+
+Current behavior is not ideal for Prefix (type-5) and self (type-2)
+routes. This is because the traffic from remote VTEPs routed sub optimally
+if they land on the system where the route does not belong.
+
+The advertise-pip feature advertises Prefix (type-5) and self (type-2)
+routes with system's individual (primary) IP as the next-hop and individual
+(system) MAC as Router-MAC (RMAC), while leaving the behavior unchanged for
+other EVPN routes.
+
+To support this feature there needs to have ability to co-exist a
+(system-MAC, system-IP) pair with a (anycast-MAC, anycast-IP) pair with the
+ability to terminate VxLAN-encapsulated packets received for either pair on
+the same L3VNI (i.e associated VLAN). This capability is need per tenant
+VRF instance.
+
+To derive the system-MAC and the anycast MAC, there needs to have a
+separate/additional MAC-VLAN interface corresponding to L3VNI’s SVI.
+The SVI interface’s MAC address can be interpreted as system-MAC
+and MAC-VLAN interface's MAC as anycast MAC.
+
+To derive system-IP and anycast-IP, the default BGP instance's router-id is used
+as system-IP and the VxLAN interface’s local tunnel IP as the anycast-IP.
+
+User has an option to configure the system-IP and/or system-MAC value if the
+auto derived value is not preferred.
+
+Note: By default, advertise-pip feature is enabled and user has an option to
+disable the feature via configuration CLI. Once the feature is disable under
+bgp vrf instance or MAC-VLAN interface is not configured, all the routes follow
+the same behavior of using same next-hop and RMAC values.
+
+.. index:: [no] advertise-pip [ip <addr> [mac <addr>]]
+.. clicmd:: [no] advertise-pip [ip <addr> [mac <addr>]]
+
+Enables or disables advertise-pip feature, specifiy system-IP and/or system-MAC
+parameters.
+
 .. _bgp-cisco-compatibility:
 
 Cisco Compatibility
@@ -2115,6 +2423,12 @@ Debugging
 .. clicmd:: show debug
 
    Show all enabled debugs.
+
+.. index:: show bgp listeners
+.. clicmd:: show bgp listeners
+
+   Display Listen sockets and the vrf that created them.  Useful for debugging of when
+   listen is not working and this is considered a developer debug statement.
 
 .. index:: [no] debug bgp neighbor-events
 .. clicmd:: [no] debug bgp neighbor-events
@@ -2849,6 +3163,8 @@ Example of how to set up a 6-Bone connection.
 .. include:: routeserver.rst
 
 .. include:: rpki.rst
+
+.. include:: wecmp_linkbw.rst
 
 .. include:: flowspec.rst
 

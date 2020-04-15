@@ -385,15 +385,15 @@ static struct stream *bmp_peerstate(struct peer *peer, bool down)
 			stream_put(s, bbpeer->open_tx, bbpeer->open_tx_len);
 		else {
 			stream_put(s, dummy_open, sizeof(dummy_open));
-			zlog_warn("bmp: missing TX OPEN message for peer %s\n",
-					peer->host);
+			zlog_warn("bmp: missing TX OPEN message for peer %s",
+				  peer->host);
 		}
 		if (bbpeer && bbpeer->open_rx)
 			stream_put(s, bbpeer->open_rx, bbpeer->open_rx_len);
 		else {
 			stream_put(s, dummy_open, sizeof(dummy_open));
-			zlog_warn("bmp: missing RX OPEN message for peer %s\n",
-					peer->host);
+			zlog_warn("bmp: missing RX OPEN message for peer %s",
+				  peer->host);
 		}
 
 		if (peer->desc)
@@ -664,8 +664,7 @@ static int bmp_peer_established(struct peer *peer)
 		return 0;
 
 	/* Check if this peer just went to Established */
-	if ((peer->last_major_event != OpenConfirm) ||
-	    !(peer_established(peer)))
+	if ((peer->ostatus != OpenConfirm) || !(peer_established(peer)))
 		return 0;
 
 	if (peer->doppelganger && (peer->doppelganger->status != Deleted)) {
@@ -766,8 +765,8 @@ static void bmp_eor(struct bmp *bmp, afi_t afi, safi_t safi, uint8_t flags)
 	stream_free(s);
 }
 
-static struct stream *bmp_update(struct prefix *p, struct peer *peer,
-		struct attr *attr, afi_t afi, safi_t safi)
+static struct stream *bmp_update(const struct prefix *p, struct peer *peer,
+				 struct attr *attr, afi_t afi, safi_t safi)
 {
 	struct bpacket_attr_vec_arr vecarr;
 	struct stream *s;
@@ -814,7 +813,8 @@ static struct stream *bmp_update(struct prefix *p, struct peer *peer,
 	return s;
 }
 
-static struct stream *bmp_withdraw(struct prefix *p, afi_t afi, safi_t safi)
+static struct stream *bmp_withdraw(const struct prefix *p, afi_t afi,
+				   safi_t safi)
 {
 	struct stream *s;
 	size_t attrlen_pos = 0, mp_start, mplen_pos;
@@ -854,7 +854,7 @@ static struct stream *bmp_withdraw(struct prefix *p, afi_t afi, safi_t safi)
 }
 
 static void bmp_monitor(struct bmp *bmp, struct peer *peer, uint8_t flags,
-			struct prefix *p, struct attr *attr, afi_t afi,
+			const struct prefix *p, struct attr *attr, afi_t afi,
 			safi_t safi, time_t uptime)
 {
 	struct stream *hdr, *msg;
@@ -941,7 +941,7 @@ afibreak:
 				return true;
 			}
 			bmp->syncpeerid = 0;
-			prefix_copy(&bmp->syncpos, &bn->p);
+			prefix_copy(&bmp->syncpos, bgp_node_get_prefix(bn));
 		}
 
 		if (bmp->targets->afimon[afi][safi] & BMP_MON_POSTPOLICY) {
@@ -989,12 +989,14 @@ afibreak:
 		bmp->syncpeerid = adjin->peer->qobj_node.nid;
 	}
 
+	const struct prefix *bn_p = bgp_node_get_prefix(bn);
+
 	if (bpi)
-		bmp_monitor(bmp, bpi->peer, BMP_PEER_FLAG_L, &bn->p, bpi->attr,
+		bmp_monitor(bmp, bpi->peer, BMP_PEER_FLAG_L, bn_p, bpi->attr,
 			    afi, safi, bpi->uptime);
 	if (adjin)
-		bmp_monitor(bmp, adjin->peer, 0, &bn->p, adjin->attr,
-			    afi, safi, adjin->uptime);
+		bmp_monitor(bmp, adjin->peer, 0, bn_p, adjin->attr, afi, safi,
+			    adjin->uptime);
 
 	return true;
 }
@@ -1131,16 +1133,13 @@ static void bmp_process_one(struct bmp_targets *bt, struct bgp *bgp,
 	struct bmp *bmp;
 	struct bmp_queue_entry *bqe, bqeref;
 	size_t refcount;
-	char buf[256];
-
-	prefix2str(&bn->p, buf, sizeof(buf));
 
 	refcount = bmp_session_count(&bt->sessions);
 	if (refcount == 0)
 		return;
 
 	memset(&bqeref, 0, sizeof(bqeref));
-	prefix_copy(&bqeref.p, &bn->p);
+	prefix_copy(&bqeref.p, bgp_node_get_prefix(bn));
 	bqeref.peerid = peer->qobj_node.nid;
 	bqeref.afi = afi;
 	bqeref.safi = safi;
@@ -1343,8 +1342,7 @@ static int bmp_accept(struct thread *thread)
 	/* We can handle IPv4 or IPv6 socket. */
 	bmp_sock = sockunion_accept(bl->sock, &su);
 	if (bmp_sock < 0) {
-		zlog_info("bmp: accept_sock failed: %s\n",
-                          safe_strerror (errno));
+		zlog_info("bmp: accept_sock failed: %s", safe_strerror(errno));
 		return -1;
 	}
 	bmp_open(bl->targets, bmp_sock);
@@ -1662,18 +1660,23 @@ static void bmp_active_connect(struct bmp_active *ba)
 	bmp_active_setup(ba);
 }
 
-static void bmp_active_resolved(struct resolver_query *resq, int numaddrs,
-				union sockunion *addr)
+static void bmp_active_resolved(struct resolver_query *resq, const char *errstr,
+				int numaddrs, union sockunion *addr)
 {
 	struct bmp_active *ba = container_of(resq, struct bmp_active, resq);
 	unsigned i;
 
 	if (numaddrs <= 0) {
-		zlog_warn("bmp[%s]: hostname resolution failed", ba->hostname);
+		zlog_warn("bmp[%s]: hostname resolution failed: %s",
+			  ba->hostname, errstr);
+		ba->last_err = errstr;
 		ba->curretry += ba->curretry / 2;
+		ba->addrpos = 0;
+		ba->addrtotal = 0;
 		bmp_active_setup(ba);
 		return;
 	}
+
 	if (numaddrs > (int)array_size(ba->addrs))
 		numaddrs = array_size(ba->addrs);
 
@@ -1698,6 +1701,8 @@ static int bmp_active_thread(struct thread *t)
 	THREAD_OFF(ba->t_read);
 	THREAD_OFF(ba->t_write);
 
+	ba->last_err = NULL;
+
 	if (ba->socket == -1) {
 		resolver_resolve(&ba->resq, AF_UNSPEC, ba->hostname,
 				 bmp_active_resolved);
@@ -1710,8 +1715,9 @@ static int bmp_active_thread(struct thread *t)
 
 	sockunion2str(&ba->addrs[ba->addrpos], buf, sizeof(buf));
 	if (ret < 0 || status != 0) {
-		zlog_warn("bmp[%s]: failed to connect to %s:%d",
-			  ba->hostname, buf, ba->port);
+		ba->last_err = strerror(status);
+		zlog_warn("bmp[%s]: failed to connect to %s:%d: %s",
+			  ba->hostname, buf, ba->port, ba->last_err);
 		goto out_next;
 	}
 
@@ -2071,9 +2077,12 @@ DEFPY(show_bmp,
 	struct bmp_bgp *bmpbgp;
 	struct bmp_targets *bt;
 	struct bmp_listener *bl;
+	struct bmp_active *ba;
 	struct bmp *bmp;
 	struct ttable *tt;
 	char buf[SU_ADDRSTRLEN];
+	char uptime[BGP_UPTIME_LEN];
+	char *out;
 
 	frr_each(bmp_bgph, &bmp_bgph, bmpbgp) {
 		vty_out(vty, "BMP state for BGP %s:\n\n",
@@ -2122,6 +2131,51 @@ DEFPY(show_bmp,
 					sockunion2str(&bl->addr, buf,
 						      SU_ADDRSTRLEN), bl->port);
 
+			vty_out(vty, "\n    Outbound connections:\n");
+			tt = ttable_new(&ttable_styles[TTSTYLE_BLANK]);
+			ttable_add_row(tt, "remote|state||timer");
+			ttable_rowseps(tt, 0, BOTTOM, true, '-');
+			frr_each (bmp_actives, &bt->actives, ba) {
+				const char *state_str = "?";
+
+				if (ba->bmp) {
+					peer_uptime(ba->bmp->t_up.tv_sec,
+						    uptime, sizeof(uptime),
+						    false, NULL);
+					ttable_add_row(tt, "%s:%d|Up|%s|%s",
+						       ba->hostname, ba->port,
+						       ba->bmp->remote, uptime);
+					continue;
+				}
+
+				uptime[0] = '\0';
+
+				if (ba->t_timer) {
+					long trem = thread_timer_remain_second(
+						ba->t_timer);
+
+					peer_uptime(monotime(NULL) - trem,
+						    uptime, sizeof(uptime),
+						    false, NULL);
+					state_str = "RetryWait";
+				} else if (ba->t_read) {
+					state_str = "Connecting";
+				} else if (ba->resq.callback) {
+					state_str = "Resolving";
+				}
+
+				ttable_add_row(tt, "%s:%d|%s|%s|%s",
+					       ba->hostname, ba->port,
+					       state_str,
+					       ba->last_err ? ba->last_err : "",
+					       uptime);
+				continue;
+			}
+			out = ttable_dump(tt, "\n");
+			vty_out(vty, "%s", out);
+			XFREE(MTYPE_TMP, out);
+			ttable_del(tt);
+
 			vty_out(vty, "\n    %zu connected clients:\n",
 					bmp_session_count(&bt->sessions));
 			tt = ttable_new(&ttable_styles[TTSTYLE_BLANK]);
@@ -2134,14 +2188,17 @@ DEFPY(show_bmp,
 
 				pullwr_stats(bmp->pullwr, &total, &q, &kq);
 
-				ttable_add_row(tt, "%s|-|%Lu|%Lu|%Lu|%Lu|%zu|%zu",
-					       bmp->remote,
+				peer_uptime(bmp->t_up.tv_sec, uptime,
+					    sizeof(uptime), false, NULL);
+
+				ttable_add_row(tt, "%s|%s|%Lu|%Lu|%Lu|%Lu|%zu|%zu",
+					       bmp->remote, uptime,
 					       bmp->cnt_update,
 					       bmp->cnt_mirror,
 					       bmp->cnt_mirror_overruns,
 					       total, q, kq);
 			}
-			char *out = ttable_dump(tt, "\n");
+			out = ttable_dump(tt, "\n");
 			vty_out(vty, "%s", out);
 			XFREE(MTYPE_TMP, out);
 			ttable_del(tt);

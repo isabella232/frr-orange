@@ -67,7 +67,7 @@ static char vrf_default_name[VRF_NAMSIZ] = VRF_DEFAULT_NAME_INTERNAL;
 static int debug_vrf = 0;
 
 /* Holding VRF hooks  */
-struct vrf_master {
+static struct vrf_master {
 	int (*vrf_new_hook)(struct vrf *);
 	int (*vrf_delete_hook)(struct vrf *);
 	int (*vrf_enable_hook)(struct vrf *);
@@ -116,7 +116,7 @@ static void vrf_update_vrf_id(ns_id_t ns_id, void *opaqueptr)
 	vrf->vrf_id = vrf_id;
 	RB_INSERT(vrf_id_head, &vrfs_by_id, vrf);
 	if (old_vrf_id == VRF_UNKNOWN)
-		vrf_enable((struct vrf *)vrf);
+		vrf_enable(vrf);
 }
 
 int vrf_switch_to_netns(vrf_id_t vrf_id)
@@ -324,10 +324,7 @@ const char *vrf_id_to_name(vrf_id_t vrf_id)
 	struct vrf *vrf;
 
 	vrf = vrf_lookup_by_id(vrf_id);
-	if (vrf)
-		return vrf->name;
-
-	return "n/a";
+	return VRF_LOGNAME(vrf);
 }
 
 vrf_id_t vrf_name_to_id(const char *name)
@@ -493,8 +490,7 @@ void vrf_init(int (*create)(struct vrf *), int (*enable)(struct vrf *),
 	/* initialise NS, in case VRF backend if NETNS */
 	ns_init();
 	if (debug_vrf)
-		zlog_debug("%s: Initializing VRF subsystem",
-			   __PRETTY_FUNCTION__);
+		zlog_debug("%s: Initializing VRF subsystem", __func__);
 
 	vrf_master.vrf_new_hook = create;
 	vrf_master.vrf_enable_hook = enable;
@@ -535,8 +531,7 @@ void vrf_terminate(void)
 	struct vrf *vrf;
 
 	if (debug_vrf)
-		zlog_debug("%s: Shutting down vrf subsystem",
-			   __PRETTY_FUNCTION__);
+		zlog_debug("%s: Shutting down vrf subsystem", __func__);
 
 	while (!RB_EMPTY(vrf_id_head, &vrfs_by_id)) {
 		vrf = RB_ROOT(vrf_id_head, &vrfs_by_id);
@@ -555,7 +550,6 @@ void vrf_terminate(void)
 	}
 }
 
-/* Create a socket for the VRF. */
 int vrf_socket(int domain, int type, int protocol, vrf_id_t vrf_id,
 	       const char *interfacename)
 {
@@ -596,10 +590,22 @@ int vrf_get_backend(void)
 	return vrf_backend;
 }
 
-void vrf_configure_backend(int vrf_backend_netns)
+int vrf_configure_backend(enum vrf_backend_type backend)
 {
-	vrf_backend = vrf_backend_netns;
+	/* Work around issue in old gcc */
+	switch (backend) {
+	case VRF_BACKEND_UNKNOWN:
+	case VRF_BACKEND_NETNS:
+	case VRF_BACKEND_VRF_LITE:
+		break;
+	default:
+		return -1;
+	}
+
+	vrf_backend = backend;
 	vrf_backend_configured = 1;
+
+	return 0;
 }
 
 int vrf_handler_create(struct vty *vty, const char *vrfname,
@@ -752,7 +758,7 @@ DEFUN (no_vrf,
 }
 
 
-struct cmd_node vrf_node = {VRF_NODE, "%s(config-vrf)# ", 1};
+static struct cmd_node vrf_node = {VRF_NODE, "%s(config-vrf)# ", 1};
 
 DEFUN_NOSH (vrf_netns,
        vrf_netns_cmd,

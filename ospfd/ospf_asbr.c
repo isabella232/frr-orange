@@ -141,7 +141,6 @@ ospf_external_info_add(struct ospf *ospf, uint8_t type, unsigned short instance,
 					ospf->vrf_id, inet_ntoa(p.prefix),
 					p.prefixlen, inetbuf);
 			XFREE(MTYPE_OSPF_EXTERNAL_INFO, rn->info);
-			rn->info = NULL;
 		}
 
 	/* Create new External info instance. */
@@ -238,20 +237,23 @@ struct ospf_lsa *ospf_external_info_find_lsa(struct ospf *ospf,
 /* Update ASBR status. */
 void ospf_asbr_status_update(struct ospf *ospf, uint8_t status)
 {
-	zlog_info("ASBR[Status:%d]: Update", status);
+	zlog_info("ASBR[%s:Status:%d]: Update",
+		  ospf_get_name(ospf), status);
 
 	/* ASBR on. */
 	if (status) {
 		/* Already ASBR. */
 		if (IS_OSPF_ASBR(ospf)) {
-			zlog_info("ASBR[Status:%d]: Already ASBR", status);
+			zlog_info("ASBR[%s:Status:%d]: Already ASBR",
+				  ospf_get_name(ospf), status);
 			return;
 		}
 		SET_FLAG(ospf->flags, OSPF_FLAG_ASBR);
 	} else {
 		/* Already non ASBR. */
 		if (!IS_OSPF_ASBR(ospf)) {
-			zlog_info("ASBR[Status:%d]: Already non ASBR", status);
+			zlog_info("ASBR[%s:Status:%d]: Already non ASBR",
+				  ospf_get_name(ospf), status);
 			return;
 		}
 		UNSET_FLAG(ospf->flags, OSPF_FLAG_ASBR);

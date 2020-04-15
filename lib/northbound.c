@@ -996,7 +996,7 @@ static int nb_transaction_process(enum nb_event event,
 		 * Only try to release resources that were allocated
 		 * successfully.
 		 */
-		if (event == NB_EV_ABORT && change->prepare_ok == false)
+		if (event == NB_EV_ABORT && !change->prepare_ok)
 			break;
 
 		/* Call the appropriate callback. */
@@ -1866,6 +1866,13 @@ static void nb_load_callbacks(const struct frr_yang_module_info *module)
 		struct nb_node *nb_node;
 		uint32_t priority;
 
+		if (i > YANG_MODULE_MAX_NODES) {
+			zlog_err(
+				"%s: %s.yang has more than %u nodes. Please increase YANG_MODULE_MAX_NODES to fix this problem.",
+				__func__, module->name, YANG_MODULE_MAX_NODES);
+			exit(1);
+		}
+
 		nb_node = nb_node_find(module->nodes[i].xpath);
 		if (!nb_node) {
 			flog_warn(EC_LIB_YANG_UNKNOWN_DATA_PATH,
@@ -1882,7 +1889,8 @@ static void nb_load_callbacks(const struct frr_yang_module_info *module)
 }
 
 void nb_init(struct thread_master *tm,
-	     const struct frr_yang_module_info *modules[], size_t nmodules)
+	     const struct frr_yang_module_info *const modules[],
+	     size_t nmodules)
 {
 	unsigned int errors = 0;
 

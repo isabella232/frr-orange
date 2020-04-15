@@ -218,7 +218,7 @@ int eigrp_network_set(struct eigrp *eigrp, struct prefix *p)
 	struct route_node *rn;
 	struct interface *ifp;
 
-	rn = route_node_get(eigrp->networks, (struct prefix *)p);
+	rn = route_node_get(eigrp->networks, p);
 	if (rn->info) {
 		/* There is already same network statement. */
 		route_unlock_node(rn);
@@ -230,7 +230,7 @@ int eigrp_network_set(struct eigrp *eigrp, struct prefix *p)
 	rn->info = (void *)pref;
 
 	/* Schedule Router ID Update. */
-	if (eigrp->router_id.s_addr == 0)
+	if (eigrp->router_id.s_addr == INADDR_ANY)
 		eigrp_router_id_update(eigrp);
 	/* Run network config now. */
 	/* Get target interface. */
@@ -327,8 +327,7 @@ int eigrp_network_unset(struct eigrp *eigrp, struct prefix *p)
 	if (!IPV4_ADDR_SAME(&pref->u.prefix4, &p->u.prefix4))
 		return 0;
 
-	prefix_ipv4_free(rn->info);
-	rn->info = NULL;
+	prefix_ipv4_free((struct prefix_ipv4 **)&rn->info);
 	route_unlock_node(rn); /* initial reference */
 
 	/* Find interfaces that not configured already.  */

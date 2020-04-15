@@ -41,7 +41,7 @@ static int	 ldpe_dispatch_pfkey(struct thread *);
 #endif
 static void	 ldpe_setup_sockets(int, int, int, int);
 static void	 ldpe_close_sockets(int);
-static void	 ldpe_iface_af_ctl(struct ctl_conn *, int, unsigned int);
+static void	 ldpe_iface_af_ctl(struct ctl_conn *c, int af, ifindex_t ifidx);
 
 struct ldpd_conf	*leconf;
 #ifdef __OpenBSD__
@@ -53,9 +53,6 @@ static struct imsgev	*iev_lde;
 #ifdef __OpenBSD__
 static struct thread	*pfkey_ev;
 #endif
-
-/* Master of threads. */
-struct thread_master *master;
 
 /* ldpe privileges */
 static zebra_capabilities_t _caps_p [] =
@@ -96,6 +93,8 @@ static struct quagga_signal_t ldpe_signals[] =
 		.handler = &sigint,
 	},
 };
+
+char *pkt_ptr; /* packet buffer */
 
 /* label distribution protocol engine */
 void
@@ -828,7 +827,7 @@ ldpe_stop_init_backoff(int af)
 }
 
 static void
-ldpe_iface_af_ctl(struct ctl_conn *c, int af, unsigned int idx)
+ldpe_iface_af_ctl(struct ctl_conn *c, int af, ifindex_t idx)
 {
 	struct iface		*iface;
 	struct iface_af		*ia;
@@ -848,7 +847,7 @@ ldpe_iface_af_ctl(struct ctl_conn *c, int af, unsigned int idx)
 }
 
 void
-ldpe_iface_ctl(struct ctl_conn *c, unsigned int idx)
+ldpe_iface_ctl(struct ctl_conn *c, ifindex_t idx)
 {
 	ldpe_iface_af_ctl(c, AF_INET, idx);
 	ldpe_iface_af_ctl(c, AF_INET6, idx);

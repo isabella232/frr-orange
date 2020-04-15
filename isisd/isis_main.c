@@ -29,7 +29,6 @@
 #include "command.h"
 #include "vty.h"
 #include "memory.h"
-#include "memory_vty.h"
 #include "stream.h"
 #include "if.h"
 #include "privs.h"
@@ -40,6 +39,7 @@
 #include "vrf.h"
 #include "qobj.h"
 #include "libfrr.h"
+#include "routemap.h"
 
 #include "isisd/isis_constants.h"
 #include "isisd/isis_common.h"
@@ -57,6 +57,7 @@
 #include "isisd/isis_lsp.h"
 #include "isisd/isis_mt.h"
 #include "isisd/fabricd.h"
+#include "isisd/isis_nb.h"
 
 /* Default configuration file name */
 #define ISISD_DEFAULT_CONFIG "isisd.conf"
@@ -161,11 +162,12 @@ struct quagga_signal_t isisd_signals[] = {
 };
 
 
-static const struct frr_yang_module_info *isisd_yang_modules[] = {
+static const struct frr_yang_module_info *const isisd_yang_modules[] = {
 	&frr_interface_info,
 #ifndef FABRICD
 	&frr_isisd_info,
 #endif /* ifndef FABRICD */
+	&frr_route_map_info,
 };
 
 #ifdef FABRICD

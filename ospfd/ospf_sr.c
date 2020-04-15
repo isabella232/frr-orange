@@ -609,7 +609,7 @@ static int compute_prefix_nhlfe(struct sr_prefix *srp)
 static int ospf_zebra_send_mpls_labels(int cmd, struct sr_nhlfe nhlfe)
 {
 	struct zapi_labels zl = {};
-	struct zapi_nexthop_label *znh;
+	struct zapi_nexthop *znh;
 
 	if (IS_DEBUG_OSPF_SR)
 		zlog_debug("    |-  %s LSP %u/%u for %s/%u via %u",
@@ -631,10 +631,10 @@ static int ospf_zebra_send_mpls_labels(int cmd, struct sr_nhlfe nhlfe)
 	zl.nexthop_num = 1;
 	znh = &zl.nexthops[0];
 	znh->type = NEXTHOP_TYPE_IPV4_IFINDEX;
-	znh->family = AF_INET;
-	znh->address.ipv4 = nhlfe.nexthop;
+	znh->gate.ipv4 = nhlfe.nexthop;
 	znh->ifindex = nhlfe.ifindex;
-	znh->label = nhlfe.label_out;
+	znh->label_num = 1;
+	znh->labels[0] = nhlfe.label_out;
 
 	return zebra_send_mpls_labels(zclient, cmd, &zl);
 }
@@ -1035,7 +1035,7 @@ void ospf_sr_ri_lsa_update(struct ospf_lsa *lsa)
 {
 	struct sr_node *srn;
 	struct tlv_header *tlvh;
-	struct lsa_header *lsah = (struct lsa_header *)lsa->data;
+	struct lsa_header *lsah = lsa->data;
 	struct ri_sr_tlv_sid_label_range *ri_srgb;
 	struct ri_sr_tlv_sr_algorithm *algo;
 	struct sr_srgb srgb;
@@ -1156,7 +1156,7 @@ void ospf_sr_ri_lsa_update(struct ospf_lsa *lsa)
 void ospf_sr_ri_lsa_delete(struct ospf_lsa *lsa)
 {
 	struct sr_node *srn;
-	struct lsa_header *lsah = (struct lsa_header *)lsa->data;
+	struct lsa_header *lsah = lsa->data;
 
 	if (IS_DEBUG_OSPF_SR)
 		zlog_debug("SR (%s): Remove SR node %s from lsa_id 4.0.0.%u",
@@ -1198,7 +1198,7 @@ void ospf_sr_ext_link_lsa_update(struct ospf_lsa *lsa)
 {
 	struct sr_node *srn;
 	struct tlv_header *tlvh;
-	struct lsa_header *lsah = (struct lsa_header *)lsa->data;
+	struct lsa_header *lsah = lsa->data;
 	struct sr_link *srl;
 
 	uint16_t length, sum;
@@ -1308,7 +1308,7 @@ void ospf_sr_ext_prefix_lsa_update(struct ospf_lsa *lsa)
 {
 	struct sr_node *srn;
 	struct tlv_header *tlvh;
-	struct lsa_header *lsah = (struct lsa_header *)lsa->data;
+	struct lsa_header *lsah = lsa->data;
 	struct sr_prefix *srp;
 
 	uint16_t length, sum;

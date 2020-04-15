@@ -262,6 +262,8 @@ void vtysh_config_parse_line(void *arg, const char *line)
 				   || !strncmp(line, " no vrrp",
 					       strlen(" no vrrp"))) {
 				config_add_line(config->line, line);
+			} else if (!strncmp(line, " ip mroute", strlen(" ip mroute"))) {
+				config_add_line_uniq_end(config->line, line);
 			} else if (config->index == RMAP_NODE
 				   || config->index == INTERFACE_NODE
 				   || config->index == VTY_NODE
@@ -518,7 +520,7 @@ int vtysh_read_config(const char *config_default_dir)
 		fprintf(stderr,
 			"%% Can't open configuration file %s due to '%s'.\n",
 			config_default_dir, safe_strerror(errno));
-		return (CMD_ERR_NO_FILE);
+		return CMD_ERR_NO_FILE;
 	}
 
 	ret = vtysh_read_file(confp);

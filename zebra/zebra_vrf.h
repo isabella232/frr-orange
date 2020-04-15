@@ -193,7 +193,7 @@ struct zebra_vrf {
 static inline vrf_id_t zvrf_id(struct zebra_vrf *zvrf)
 {
 	if (!zvrf || !zvrf->vrf)
-		return VRF_UNKNOWN;
+		return VRF_DEFAULT;
 	return zvrf->vrf->vrf_id;
 }
 
@@ -206,6 +206,8 @@ static inline const char *zvrf_ns_name(struct zebra_vrf *zvrf)
 
 static inline const char *zvrf_name(struct zebra_vrf *zvrf)
 {
+	if (!zvrf || !zvrf->vrf)
+		return "Unknown";
 	return zvrf->vrf->name;
 }
 
@@ -233,9 +235,13 @@ zvrf_other_table_compare_func(const struct other_route_table *a,
 DECLARE_RBTREE_UNIQ(otable, struct other_route_table, next,
 		    zvrf_other_table_compare_func)
 
-struct route_table *zebra_vrf_table_with_table_id(afi_t afi, safi_t safi,
-						  vrf_id_t vrf_id,
-						  uint32_t table_id);
+extern struct route_table *
+zebra_vrf_lookup_table_with_table_id(afi_t afi, safi_t safi, vrf_id_t vrf_id,
+				     uint32_t table_id);
+extern struct route_table *zebra_vrf_get_table_with_table_id(afi_t afi,
+							     safi_t safi,
+							     vrf_id_t vrf_id,
+							     uint32_t table_id);
 
 extern void zebra_vrf_update_all(struct zserv *client);
 extern struct zebra_vrf *zebra_vrf_lookup_by_id(vrf_id_t vrf_id);

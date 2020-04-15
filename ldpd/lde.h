@@ -114,6 +114,8 @@ struct fec_nh {
 };
 #define F_FEC_NH_NEW		0x01
 #define F_FEC_NH_CONNECTED	0x02
+#define F_FEC_NH_DEFER		0x04		/* running ordered control */
+#define F_FEC_NH_NO_LDP		0x08		/* no ldp on this interface */
 
 struct fec_node {
 	struct fec		 fec;
@@ -181,6 +183,7 @@ void		 lde_req_del(struct lde_nbr *, struct lde_req *, int);
 struct lde_wdraw *lde_wdraw_add(struct lde_nbr *, struct fec_node *);
 void		 lde_wdraw_del(struct lde_nbr *, struct lde_wdraw *);
 void		 lde_change_egress_label(int);
+void		 lde_change_host_label(int);
 struct lde_addr	*lde_address_find(struct lde_nbr *, int,
 		    union ldpd_addr *);
 

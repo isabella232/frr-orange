@@ -172,10 +172,6 @@ enum bfd_session_flags {
 	BFD_SESS_FLAG_CBIT = 1 << 9,	/* CBIT is set */
 };
 
-#define BFD_SET_FLAG(field, flag) (field |= flag)
-#define BFD_UNSET_FLAG(field, flag) (field &= ~flag)
-#define BFD_CHECK_FLAG(field, flag) (field & flag)
-
 /* BFD session hash keys */
 struct bfd_key {
 	uint16_t family;
@@ -365,7 +361,7 @@ TAILQ_HEAD(bcslist, bfd_control_socket);
 
 int control_init(const char *path);
 void control_shutdown(void);
-int control_notify(struct bfd_session *bs);
+int control_notify(struct bfd_session *bs, uint8_t notify_state);
 int control_notify_config(const char *op, struct bfd_session *bs);
 int control_accept(struct thread *t);
 
@@ -399,8 +395,8 @@ struct bfd_global {
 	struct zebra_privs_t bfdd_privs;
 };
 extern struct bfd_global bglobal;
-extern struct bfd_diag_str_list diag_list[];
-extern struct bfd_state_str_list state_list[];
+extern const struct bfd_diag_str_list diag_list[];
+extern const struct bfd_state_str_list state_list[];
 
 void socket_close(int *s);
 
@@ -427,27 +423,14 @@ void pl_free(struct peer_label *pl);
 
 
 /*
- * log.c
- *
- * Contains code that does the logging procedures. Might implement multiple
- * backends (e.g. zebra log, syslog or other logging lib).
+ * logging - alias to zebra log
  */
-enum blog_level {
-	/* level vs syslog equivalent */
-	BLOG_DEBUG = 0,   /* LOG_DEBUG */
-	BLOG_INFO = 1,    /* LOG_INFO */
-	BLOG_WARNING = 2, /* LOG_WARNING */
-	BLOG_ERROR = 3,   /* LOG_ERR */
-	BLOG_FATAL = 4,   /* LOG_CRIT */
-};
-
-void log_init(int foreground, enum blog_level level,
-	      struct frr_daemon_info *fdi);
-void log_info(const char *fmt, ...);
-void log_debug(const char *fmt, ...);
-void log_warning(const char *fmt, ...);
-void log_error(const char *fmt, ...);
-void log_fatal(const char *fmt, ...);
+#define zlog_fatal(msg, ...)                                                   \
+	do {                                                                   \
+		zlog_err(msg, ##__VA_ARGS__);                                  \
+		assert(!msg);                                                  \
+		abort();                                                       \
+	} while (0)
 
 
 /*
@@ -461,14 +444,14 @@ int bp_set_tosv6(int sd, uint8_t value);
 int bp_set_tos(int sd, uint8_t value);
 int bp_bind_dev(int sd, const char *dev);
 
-int bp_udp_shop(vrf_id_t vrf_id);
-int bp_udp_mhop(vrf_id_t vrf_id);
-int bp_udp6_shop(vrf_id_t vrf_id);
-int bp_udp6_mhop(vrf_id_t vrf_id);
+int bp_udp_shop(const struct vrf *vrf);
+int bp_udp_mhop(const struct vrf *vrf);
+int bp_udp6_shop(const struct vrf *vrf);
+int bp_udp6_mhop(const struct vrf *vrf);
 int bp_peer_socket(const struct bfd_session *bs);
 int bp_peer_socketv6(const struct bfd_session *bs);
-int bp_echo_socket(vrf_id_t vrf_id);
-int bp_echov6_socket(vrf_id_t vrf_id);
+int bp_echo_socket(const struct vrf *vrf);
+int bp_echov6_socket(const struct vrf *vrf);
 
 void ptm_bfd_snd(struct bfd_session *bfd, int fbit);
 void ptm_bfd_echo_snd(struct bfd_session *bfd);
@@ -567,6 +550,8 @@ typedef void (*hash_iter_func)(struct hash_bucket *hb, void *arg);
 void bfd_id_iterate(hash_iter_func hif, void *arg);
 void bfd_key_iterate(hash_iter_func hif, void *arg);
 
+unsigned long bfd_get_session_count(void);
+
 /* Export callback functions for `event.c`. */
 extern struct thread_master *master;
 
@@ -593,29 +578,6 @@ void bfdd_vty_init(void);
  */
 void bfdd_cli_init(void);
 
-void bfd_cli_show_header(struct vty *vty, struct lyd_node *dnode,
-			 bool show_defaults);
-void bfd_cli_show_header_end(struct vty *vty, struct lyd_node *dnode);
-void bfd_cli_show_single_hop_peer(struct vty *vty,
-				  struct lyd_node *dnode,
-				  bool show_defaults);
-void bfd_cli_show_multi_hop_peer(struct vty *vty,
-				 struct lyd_node *dnode,
-				 bool show_defaults);
-void bfd_cli_show_peer_end(struct vty *vty, struct lyd_node *dnode);
-void bfd_cli_show_mult(struct vty *vty, struct lyd_node *dnode,
-		       bool show_defaults);
-void bfd_cli_show_tx(struct vty *vty, struct lyd_node *dnode,
-		     bool show_defaults);
-void bfd_cli_show_rx(struct vty *vty, struct lyd_node *dnode,
-		     bool show_defaults);
-void bfd_cli_show_shutdown(struct vty *vty, struct lyd_node *dnode,
-			   bool show_defaults);
-void bfd_cli_show_echo(struct vty *vty, struct lyd_node *dnode,
-			   bool show_defaults);
-void bfd_cli_show_echo_interval(struct vty *vty, struct lyd_node *dnode,
-				bool show_defaults);
-
 
 /*
  * ptm_adapter.c
@@ -628,14 +590,6 @@ void bfdd_sessions_enable_vrf(struct vrf *vrf);
 void bfdd_sessions_disable_vrf(struct vrf *vrf);
 void bfd_session_update_vrf_name(struct bfd_session *bs, struct vrf *vrf);
 
-int ptm_bfd_notify(struct bfd_session *bs);
-
-
-/*
- * bfdd_northbound.c
- *
- * BFD northbound callbacks.
- */
-extern const struct frr_yang_module_info frr_bfdd_info;
+int ptm_bfd_notify(struct bfd_session *bs, uint8_t notify_state);
 
 #endif /* _BFD_H_ */

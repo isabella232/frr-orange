@@ -51,6 +51,11 @@
 
 DEFINE_QOBJ_TYPE(ospf6)
 
+FRR_CFG_DEFAULT_BOOL(OSPF6_LOG_ADJACENCY_CHANGES,
+	{ .val_bool = true, .match_profile = "datacenter", },
+	{ .val_bool = false },
+)
+
 /* global ospf6d variable */
 struct ospf6 *ospf6;
 static struct ospf6_master ospf6_master;
@@ -106,7 +111,7 @@ static void ospf6_top_brouter_hook_add(struct ospf6_route *route)
 		inet_ntop(AF_INET, &brouter_id, brouter_name,
 			  sizeof(brouter_name));
 		zlog_debug("%s: brouter %s add with adv router %x nh count %u",
-			   __PRETTY_FUNCTION__, brouter_name,
+			   __func__, brouter_name,
 			   route->path.origin.adv_router,
 			   listcount(route->nh_list));
 	}
@@ -126,7 +131,7 @@ static void ospf6_top_brouter_hook_remove(struct ospf6_route *route)
 		inet_ntop(AF_INET, &brouter_id, brouter_name,
 			  sizeof(brouter_name));
 		zlog_debug("%s: brouter %p %s del with adv router %x nh %u",
-			   __PRETTY_FUNCTION__, (void *)route, brouter_name,
+			   __func__, (void *)route, brouter_name,
 			   route->path.origin.adv_router,
 			   listcount(route->nh_list));
 	}
@@ -178,11 +183,6 @@ static struct ospf6 *ospf6_create(vrf_id_t vrf_id)
 	o->ref_bandwidth = OSPF6_REFERENCE_BANDWIDTH;
 
 	o->distance_table = route_table_init();
-
-/* Enable "log-adjacency-changes" */
-#if DFLT_OSPF6_LOG_ADJACENCY_CHANGES
-	SET_FLAG(o->config_flags, OSPF6_LOG_ADJACENCY_CHANGES);
-#endif
 
 	QOBJ_REG(o, ospf6);
 
@@ -327,6 +327,9 @@ DEFUN_NOSH (router_ospf6,
 {
 	if (ospf6 == NULL) {
 		ospf6 = ospf6_create(VRF_DEFAULT);
+		if (DFLT_OSPF6_LOG_ADJACENCY_CHANGES)
+			SET_FLAG(ospf6->config_flags,
+				 OSPF6_LOG_ADJACENCY_CHANGES);
 		if (ospf6->router_id == 0)
 			ospf6_router_id_update();
 	}
@@ -1079,9 +1082,9 @@ static int config_write_ospf6(struct vty *vty)
 	if (CHECK_FLAG(ospf6->config_flags, OSPF6_LOG_ADJACENCY_CHANGES)) {
 		if (CHECK_FLAG(ospf6->config_flags, OSPF6_LOG_ADJACENCY_DETAIL))
 			vty_out(vty, " log-adjacency-changes detail\n");
-		else if (!DFLT_OSPF6_LOG_ADJACENCY_CHANGES)
+		else if (!SAVE_OSPF6_LOG_ADJACENCY_CHANGES)
 			vty_out(vty, " log-adjacency-changes\n");
-	} else if (DFLT_OSPF6_LOG_ADJACENCY_CHANGES) {
+	} else if (SAVE_OSPF6_LOG_ADJACENCY_CHANGES) {
 		vty_out(vty, " no log-adjacency-changes\n");
 	}
 

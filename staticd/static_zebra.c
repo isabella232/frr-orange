@@ -79,7 +79,7 @@ static int interface_address_delete(ZAPI_CALLBACK_ARGS)
 	if (!c)
 		return 0;
 
-	connected_free(c);
+	connected_free(&c);
 	return 0;
 }
 
@@ -122,12 +122,13 @@ static int route_notify_owner(ZAPI_CALLBACK_ARGS)
 	case ZAPI_ROUTE_FAIL_INSTALL:
 		static_nht_mark_state(&p, vrf_id, STATIC_NOT_INSTALLED);
 		zlog_warn("%s: Route %s failed to install for table: %u",
-			  __PRETTY_FUNCTION__, buf, table_id);
+			  __func__, buf, table_id);
 		break;
 	case ZAPI_ROUTE_BETTER_ADMIN_WON:
 		static_nht_mark_state(&p, vrf_id, STATIC_NOT_INSTALLED);
-		zlog_warn("%s: Route %s over-ridden by better route for table: %u",
-			  __PRETTY_FUNCTION__, buf, table_id);
+		zlog_warn(
+			"%s: Route %s over-ridden by better route for table: %u",
+			__func__, buf, table_id);
 		break;
 	case ZAPI_ROUTE_INSTALLED:
 		static_nht_mark_state(&p, vrf_id, STATIC_INSTALLED);
@@ -138,7 +139,7 @@ static int route_notify_owner(ZAPI_CALLBACK_ARGS)
 	case ZAPI_ROUTE_REMOVE_FAIL:
 		static_nht_mark_state(&p, vrf_id, STATIC_INSTALLED);
 		zlog_warn("%s: Route %s failure to remove for table: %u",
-			  __PRETTY_FUNCTION__, buf, table_id);
+			  __func__, buf, table_id);
 		break;
 	}
 
@@ -260,7 +261,7 @@ static void static_nht_hash_free(void *data)
 {
 	struct static_nht_data *nhtd = data;
 
-	prefix_free(nhtd->nh);
+	prefix_free(&nhtd->nh);
 	XFREE(MTYPE_TMP, nhtd);
 }
 
@@ -335,8 +336,7 @@ void static_zebra_nht_register(struct route_node *rn,
 	}
 
 	if (zclient_send_rnh(zclient, cmd, &p, false, si->nh_vrf_id) < 0)
-		zlog_warn("%s: Failure to send nexthop to zebra",
-			  __PRETTY_FUNCTION__);
+		zlog_warn("%s: Failure to send nexthop to zebra", __func__);
 }
 
 extern void static_zebra_route_add(struct route_node *rn,
@@ -388,7 +388,8 @@ extern void static_zebra_route_add(struct route_node *rn,
 			continue;
 
 		api_nh->vrf_id = si->nh_vrf_id;
-		api_nh->onlink = si->onlink;
+		if (si->onlink)
+			SET_FLAG(api_nh->flags, ZAPI_NEXTHOP_FLAG_ONLINK);
 
 		si->state = STATIC_SENT_TO_ZEBRA;
 
@@ -441,7 +442,7 @@ extern void static_zebra_route_add(struct route_node *rn,
 		if (si->snh_label.num_labels) {
 			int i;
 
-			SET_FLAG(api.message, ZAPI_MESSAGE_LABEL);
+			SET_FLAG(api_nh->flags, ZAPI_NEXTHOP_FLAG_LABEL);
 			api_nh->label_num = si->snh_label.num_labels;
 			for (i = 0; i < api_nh->label_num; i++)
 				api_nh->labels[i] = si->snh_label.label[i];

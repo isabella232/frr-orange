@@ -7,7 +7,7 @@
  * Copyright (C) 2016 Cumulus Networks, Inc.
  * Copyright (C) 2017 David Lamparter for NetDEF, Inc.
  *
- * This file is part of FreeRangeRouting (FRR).
+ * This file is part of FRRouting (FRR).
  *
  * FRR is free software; you can redistribute it and/or modify it under the
  * terms of the GNU General Public License as published by the Free Software
@@ -28,7 +28,7 @@
 #endif
 
 #include "command.h"
-#include "memory_vty.h"
+#include "lib_vty.h"
 
 static void vty_do_exit(int isexit)
 {
@@ -57,8 +57,8 @@ int main(int argc, char **argv)
 	host.domainname = strdup("testdomainname");
 
 	vty_init(master, true);
-	memory_init();
-	yang_init();
+	lib_cmd_init();
+	yang_init(true);
 	nb_init(master, NULL, 0);
 
 	vty_stdio(vty_do_exit);

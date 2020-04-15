@@ -16,7 +16,7 @@ module frr-eigrpd {
     prefix frr-route-types;
   }
 
-  organization "Free Range Routing";
+  organization "FRRouting";
   contact
     "FRR Users List:       <mailto:frog@lists.frrouting.org>
      FRR Development List: <mailto:dev@lists.frrouting.org>";
@@ -191,7 +191,7 @@ module frr-eigrpd {
 
       leaf-list neighbor {
         description "Specific EIGRP neighbor";
-        type inet:ipv4-prefix;
+        type inet:ipv4-address;
       }
 
       list redistribute {

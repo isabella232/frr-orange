@@ -18,6 +18,7 @@ lib_libfrr_la_SOURCES = \
 	lib/command_parse.y \
 	lib/csv.c \
 	lib/debug.c \
+	lib/defaults.c \
 	lib/distribute.c \
 	lib/ferr.c \
 	lib/filter.c \
@@ -40,16 +41,18 @@ lib_libfrr_la_SOURCES = \
 	lib/json.c \
 	lib/keychain.c \
 	lib/lib_errors.c \
+	lib/lib_vty.c \
 	lib/libfrr.c \
 	lib/linklist.c \
+	lib/link_state.c \
 	lib/log.c \
 	lib/log_vty.c \
 	lib/md5.c \
 	lib/memory.c \
-	lib/memory_vty.c \
 	lib/mlag.c \
 	lib/module.c \
 	lib/mpls.c \
+	lib/srv6.c \
 	lib/network.c \
 	lib/nexthop.c \
 	lib/netns_linux.c \
@@ -69,6 +72,8 @@ lib_libfrr_la_SOURCES = \
 	lib/qobj.c \
 	lib/ringbuf.c \
 	lib/routemap.c \
+	lib/routemap_cli.c \
+	lib/routemap_northbound.c \
 	lib/sbuf.c \
 	lib/seqlock.c \
 	lib/sha256.c \
@@ -102,7 +107,9 @@ lib_libfrr_la_SOURCES = \
 	# end
 
 nodist_lib_libfrr_la_SOURCES = \
+	yang/frr-filter.yang.c \
 	yang/frr-interface.yang.c \
+	yang/frr-route-map.yang.c \
 	yang/frr-route-types.yang.c \
 	yang/ietf/ietf-routing-types.yang.c \
 	yang/frr-module-translator.yang.c \
@@ -114,9 +121,11 @@ vtysh_scan += \
 	$(top_srcdir)/lib/if.c \
 	$(top_srcdir)/lib/if_rmap.c \
 	$(top_srcdir)/lib/keychain.c \
+	$(top_srcdir)/lib/lib_vty.c \
 	$(top_srcdir)/lib/nexthop_group.c \
 	$(top_srcdir)/lib/plist.c \
 	$(top_srcdir)/lib/routemap.c \
+	$(top_srcdir)/lib/routemap_cli.c \
 	$(top_srcdir)/lib/vrf.c \
 	$(top_srcdir)/lib/vty.c \
 	# end
@@ -136,6 +145,8 @@ lib/nexthop_group_clippy.c: $(CLIPPY_DEPS)
 lib/nexthop_group.lo: lib/nexthop_group_clippy.c
 lib/northbound_cli_clippy.c: $(CLIPPY_DEPS)
 lib/northbound_cli.lo: lib/northbound_cli_clippy.c
+lib/routemap_cli_clippy.c: $(CLIPPY_DEPS)
+lib/routemap_cli.lo: lib/routemap_cli_clippy.c
 lib/vty_clippy.c: $(CLIPPY_DEPS)
 lib/vty.lo: lib/vty_clippy.c
 lib/log_vty_clippy.c: $(CLIPPY_DEPS)
@@ -156,6 +167,7 @@ pkginclude_HEADERS += \
 	lib/csv.h \
 	lib/db.h \
 	lib/debug.h \
+	lib/defaults.h \
 	lib/distribute.h \
 	lib/ferr.h \
 	lib/filter.h \
@@ -179,17 +191,19 @@ pkginclude_HEADERS += \
 	lib/json.h \
 	lib/keychain.h \
 	lib/lib_errors.h \
+	lib/lib_vty.h \
 	lib/libfrr.h \
 	lib/libospf.h \
 	lib/linklist.h \
+	lib/link_state.h \
 	lib/log.h \
 	lib/log_vty.h \
 	lib/md5.h \
 	lib/memory.h \
-	lib/memory_vty.h \
 	lib/module.h \
 	lib/monotime.h \
 	lib/mpls.h \
+	lib/srv6.h \
 	lib/network.h \
 	lib/nexthop.h \
 	lib/nexthop_group.h \

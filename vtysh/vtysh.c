@@ -704,7 +704,7 @@ int vtysh_mark_file(const char *filename)
 	if (confp == NULL) {
 		fprintf(stderr, "%% Can't open config file %s due to '%s'.\n",
 			filename, safe_strerror(errno));
-		return (CMD_ERR_NO_FILE);
+		return CMD_ERR_NO_FILE;
 	}
 
 	vty = vty_new();
@@ -725,19 +725,19 @@ int vtysh_mark_file(const char *filename)
 		switch (vty->node) {
 		case LDP_IPV4_IFACE_NODE:
 			if (strncmp(vty_buf_copy, "   ", 3)) {
-				vty_out(vty, "  end\n");
+				vty_out(vty, " exit-ldp-if\n");
 				vty->node = LDP_IPV4_NODE;
 			}
 			break;
 		case LDP_IPV6_IFACE_NODE:
 			if (strncmp(vty_buf_copy, "   ", 3)) {
-				vty_out(vty, "  end\n");
+				vty_out(vty, " exit-ldp-if\n");
 				vty->node = LDP_IPV6_NODE;
 			}
 			break;
 		case LDP_PSEUDOWIRE_NODE:
 			if (strncmp(vty_buf_copy, "  ", 2)) {
-				vty_out(vty, " end\n");
+				vty_out(vty, " exit\n");
 				vty->node = LDP_L2VPN_NODE;
 			}
 			break;
@@ -885,7 +885,7 @@ int vtysh_mark_file(const char *filename)
 	if (confp != stdin)
 		fclose(confp);
 
-	return (0);
+	return 0;
 }
 
 /* Configration make from file. */
@@ -1002,7 +1002,6 @@ static int vtysh_process_questionmark(const char *input, int input_len)
 		vty_out(vty, "%% Ambiguous command.\n");
 		rl_on_new_line();
 		return 0;
-		break;
 	case CMD_ERR_NO_MATCH:
 		cmd_free_strvec(vline);
 		if (describe)
@@ -1010,7 +1009,6 @@ static int vtysh_process_questionmark(const char *input, int input_len)
 		vty_out(vty, "%% There is no matched command.\n");
 		rl_on_new_line();
 		return 0;
-		break;
 	}
 
 	/* Get width of command string. */
@@ -1153,7 +1151,6 @@ static char *command_generator(const char *text, int state)
 		return matched[index++];
 
 	XFREE(MTYPE_TMP, matched);
-	matched = NULL;
 
 	return NULL;
 }
@@ -2163,7 +2160,8 @@ DEFUNSH(VTYSH_ZEBRA, vtysh_pseudowire, vtysh_pseudowire_cmd,
 	return CMD_SUCCESS;
 }
 
-DEFUNSH(VTYSH_PBRD | VTYSH_SHARPD, vtysh_nexthop_group, vtysh_nexthop_group_cmd,
+DEFUNSH(VTYSH_NH_GROUP,
+	vtysh_nexthop_group, vtysh_nexthop_group_cmd,
 	"nexthop-group NHGNAME",
 	"Nexthop Group configuration\n"
 	"Name of the Nexthop Group\n")
@@ -2172,7 +2170,7 @@ DEFUNSH(VTYSH_PBRD | VTYSH_SHARPD, vtysh_nexthop_group, vtysh_nexthop_group_cmd,
 	return CMD_SUCCESS;
 }
 
-DEFSH(VTYSH_PBRD | VTYSH_SHARPD, vtysh_no_nexthop_group_cmd,
+DEFSH(VTYSH_NH_GROUP, vtysh_no_nexthop_group_cmd,
       "no nexthop-group NHGNAME",
       NO_STR
       "Nexthop Group Configuration\n"
@@ -2209,13 +2207,15 @@ DEFUNSH(VTYSH_VRF, vtysh_quit_vrf, vtysh_quit_vrf_cmd, "quit",
 	return vtysh_exit_vrf(self, vty, argc, argv);
 }
 
-DEFUNSH(VTYSH_PBRD | VTYSH_SHARPD, vtysh_exit_nexthop_group, vtysh_exit_nexthop_group_cmd,
+DEFUNSH(VTYSH_NH_GROUP,
+	vtysh_exit_nexthop_group, vtysh_exit_nexthop_group_cmd,
 	"exit", "Exit current mode and down to previous mode\n")
 {
 	return vtysh_exit(vty);
 }
 
-DEFUNSH(VTYSH_PBRD | VTYSH_SHARPD, vtysh_quit_nexthop_group, vtysh_quit_nexthop_group_cmd,
+DEFUNSH(VTYSH_NH_GROUP,
+	vtysh_quit_nexthop_group, vtysh_quit_nexthop_group_cmd,
 	"quit", "Exit current mode and down to previous mode\n")
 {
 	return vtysh_exit_nexthop_group(self, vty, argc, argv);
@@ -2877,13 +2877,12 @@ static void backup_config_file(const char *fbackup)
 	strlcat(integrate_sav, CONF_BACKUP_EXT, integrate_sav_sz);
 
 	/* Move current configuration file to backup config file. */
-	if (unlink(integrate_sav) != 0) {
-		vty_out(vty, "Warning: %s unlink failed\n", integrate_sav);
-	}
-	if (rename(fbackup, integrate_sav) != 0) {
-		vty_out(vty, "Error renaming %s to %s\n", fbackup,
-			integrate_sav);
-	}
+	if (unlink(integrate_sav) != 0 && errno != ENOENT)
+		vty_out(vty, "Unlink failed for %s: %s\n", integrate_sav,
+			strerror(errno));
+	if (rename(fbackup, integrate_sav) != 0 && errno != ENOENT)
+		vty_out(vty, "Error renaming %s to %s: %s\n", fbackup,
+			integrate_sav, strerror(errno));
 	free(integrate_sav);
 }
 
@@ -3053,6 +3052,24 @@ DEFUN (vtysh_copy_running_config,
        "Copy to startup configuration\n")
 {
 	return vtysh_write_memory(self, vty, argc, argv);
+}
+
+DEFUN (vtysh_copy_to_running,
+       vtysh_copy_to_running_cmd,
+       "copy FILENAME running-config",
+       "Apply a configuration file\n"
+       "Configuration file to read\n"
+       "Apply to current configuration\n")
+{
+	int ret;
+	const char *fname = argv[1]->arg;
+
+	ret = vtysh_read_config(fname);
+
+	/* Return to enable mode - the 'read_config' api leaves us up a level */
+	vtysh_execute_no_pager("enable");
+
+	return ret;
 }
 
 DEFUN (vtysh_terminal_paginate,
@@ -3652,7 +3669,7 @@ char *vtysh_prompt(void)
 {
 	static char buf[512];
 
-	snprintf(buf, sizeof buf, cmd_prompt(vty->node), cmd_hostname_get());
+	snprintf(buf, sizeof(buf), cmd_prompt(vty->node), cmd_hostname_get());
 	return buf;
 }
 
@@ -4021,6 +4038,7 @@ void vtysh_init_vty(void)
 	install_element(INTERFACE_NODE, &vtysh_link_params_cmd);
 	install_element(ENABLE_NODE, &vtysh_show_running_config_cmd);
 	install_element(ENABLE_NODE, &vtysh_copy_running_config_cmd);
+	install_element(ENABLE_NODE, &vtysh_copy_to_running_cmd);
 
 	install_element(CONFIG_NODE, &vtysh_vrf_cmd);
 	install_element(VRF_NODE, &vtysh_vrf_netns_cmd);

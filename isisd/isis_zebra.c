@@ -128,7 +128,7 @@ static int isis_zebra_if_address_del(ZAPI_CALLBACK_ARGS)
 
 	if (if_is_operative(ifp))
 		isis_circuit_del_addr(circuit_scan_by_ifp(ifp), c);
-	connected_free(c);
+	connected_free(&c);
 
 	return 0;
 }
@@ -184,7 +184,7 @@ void isis_zebra_route_add_route(struct prefix *prefix,
 			break;
 		api_nh = &api.nexthops[count];
 		if (fabricd)
-			api_nh->onlink = true;
+			SET_FLAG(api_nh->flags, ZAPI_NEXTHOP_FLAG_ONLINK);
 		api_nh->vrf_id = VRF_DEFAULT;
 
 		switch (nexthop->family) {

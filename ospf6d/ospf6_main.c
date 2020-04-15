@@ -28,7 +28,6 @@
 #include "command.h"
 #include "vty.h"
 #include "memory.h"
-#include "memory_vty.h"
 #include "if.h"
 #include "filter.h"
 #include "prefix.h"
@@ -166,8 +165,9 @@ struct quagga_signal_t ospf6_signals[] = {
 	},
 };
 
-static const struct frr_yang_module_info *ospf6d_yang_modules[] = {
+static const struct frr_yang_module_info *const ospf6d_yang_modules[] = {
 	&frr_interface_info,
+	&frr_route_map_info,
 };
 
 FRR_DAEMON_INFO(ospf6d, OSPF6, .vty_port = OSPF6_VTY_PORT,

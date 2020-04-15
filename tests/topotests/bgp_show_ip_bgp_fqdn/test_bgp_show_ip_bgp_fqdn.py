@@ -5,7 +5,7 @@
 # Part of NetDEF Topology Tests
 #
 # Copyright (c) 2019 by
-# Network Device Education Foundation, Inc. ("NetDEF")
+# Donatas Abraitis <donatas.abraitis@gmail.com>
 #
 # Permission to use, copy, modify, and/or distribute this software
 # for any purpose with or without fee is hereby granted, provided
@@ -33,9 +33,10 @@ import sys
 import json
 import time
 import pytest
+import functools
 
 CWD = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(os.path.join(CWD, '../'))
+sys.path.append(os.path.join(CWD, "../"))
 
 # pylint: disable=C0413
 from lib import topotest
@@ -43,16 +44,18 @@ from lib.topogen import Topogen, TopoRouter, get_topogen
 from lib.topolog import logger
 from mininet.topo import Topo
 
+
 class TemplateTopo(Topo):
     def build(self, *_args, **_opts):
         tgen = get_topogen(self)
 
         for routern in range(1, 3):
-            tgen.add_router('r{}'.format(routern))
+            tgen.add_router("r{}".format(routern))
 
-        switch = tgen.add_switch('s1')
-        switch.add_link(tgen.gears['r1'])
-        switch.add_link(tgen.gears['r2'])
+        switch = tgen.add_switch("s1")
+        switch.add_link(tgen.gears["r1"])
+        switch.add_link(tgen.gears["r2"])
+
 
 def setup_module(mod):
     tgen = Topogen(TemplateTopo, mod.__name__)
@@ -62,48 +65,52 @@ def setup_module(mod):
 
     for i, (rname, router) in enumerate(router_list.iteritems(), 1):
         router.load_config(
-            TopoRouter.RD_ZEBRA,
-            os.path.join(CWD, '{}/zebra.conf'.format(rname))
+            TopoRouter.RD_ZEBRA, os.path.join(CWD, "{}/zebra.conf".format(rname))
         )
         router.load_config(
-            TopoRouter.RD_BGP,
-            os.path.join(CWD, '{}/bgpd.conf'.format(rname))
+            TopoRouter.RD_BGP, os.path.join(CWD, "{}/bgpd.conf".format(rname))
         )
 
     tgen.start_router()
+
 
 def teardown_module(mod):
     tgen = get_topogen()
     tgen.stop_topology()
 
-def test_bgp_maximum_prefix_invalid():
+
+def test_bgp_show_ip_bgp_hostname():
     tgen = get_topogen()
 
     if tgen.routers_have_failure():
         pytest.skip(tgen.errors)
 
-    def _bgp_converge(router, neighbor):
-        cmd = "show ip bgp neighbor {0} json".format(neighbor)
-        while True:
-            output = json.loads(tgen.gears[router].vtysh_cmd(cmd))
-            if output[neighbor]['bgpState'] == 'Established':
-                time.sleep(3)
+    router = tgen.gears["r2"]
+
+    def _bgp_converge(router):
+        output = json.loads(router.vtysh_cmd("show ip bgp neighbor 192.168.255.1 json"))
+        expected = {
+            "192.168.255.1": {
+                "bgpState": "Established",
+                "addressFamilyInfo": {"ipv4Unicast": {"acceptedPrefixCounter": 2}},
+            }
+        }
+        return topotest.json_cmp(output, expected)
+
+    def _bgp_show_nexthop_hostname_and_ip(router):
+        output = json.loads(router.vtysh_cmd("show ip bgp json"))
+        for nh in output["routes"]["172.16.255.253/32"][0]["nexthops"]:
+            if "hostname" in nh and "ip" in nh:
                 return True
+        return False
 
-    def _bgp_show_nexthop(router, prefix):
-        cmd = "show ip bgp json"
-        output = json.loads(tgen.gears[router].vtysh_cmd(cmd))
-        for nh in output['routes'][prefix][0]['nexthops']:
-            if 'fqdn' in nh:
-                return 'fqdn'
-        return 'ip'
+    test_func = functools.partial(_bgp_converge, router)
+    success, result = topotest.run_and_expect(test_func, None, count=60, wait=0.5)
 
-    if _bgp_converge('r2', '192.168.255.1'):
-        assert _bgp_show_nexthop('r2', '172.16.255.254/32') == 'fqdn'
+    assert result is None, 'Failed bgp convergence in "{}"'.format(router)
+    assert _bgp_show_nexthop_hostname_and_ip(router) == True
 
-    if _bgp_converge('r1', '192.168.255.2'):
-        assert _bgp_show_nexthop('r1', '172.16.255.253/32') == 'ip'
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = ["-s"] + sys.argv[1:]
     sys.exit(pytest.main(args))

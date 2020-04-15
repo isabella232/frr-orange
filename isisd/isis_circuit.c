@@ -58,6 +58,7 @@
 #include "isisd/isis_mt.h"
 #include "isisd/isis_errors.h"
 #include "isisd/isis_tx_queue.h"
+#include "isisd/isis_nb.h"
 
 DEFINE_QOBJ_TYPE(isis_circuit)
 
@@ -337,15 +338,14 @@ void isis_circuit_del_addr(struct isis_circuit *circuit,
 
 		if (ip) {
 			listnode_delete(circuit->ip_addrs, ip);
-			prefix_ipv4_free(ip);
+			prefix_ipv4_free(&ip);
 			if (circuit->area)
 				lsp_regenerate_schedule(circuit->area,
 							circuit->is_type, 0);
 		} else {
 			prefix2str(connected->address, buf, sizeof(buf));
 			zlog_warn(
-				"Nonexistent ip address %s removal attempt from \
-                      circuit %s",
+				"Nonexistent ip address %s removal attempt from circuit %s",
 				buf, circuit->interface->name);
 			zlog_warn("Current ip addresses on %s:",
 				  circuit->interface->name);
@@ -357,7 +357,7 @@ void isis_circuit_del_addr(struct isis_circuit *circuit,
 			zlog_warn("End of addresses");
 		}
 
-		prefix_ipv4_free(ipv4);
+		prefix_ipv4_free(&ipv4);
 	}
 	if (connected->address->family == AF_INET6) {
 		ipv6 = prefix_ipv6_new();
@@ -373,7 +373,7 @@ void isis_circuit_del_addr(struct isis_circuit *circuit,
 			}
 			if (ip6) {
 				listnode_delete(circuit->ipv6_link, ip6);
-				prefix_ipv6_free(ip6);
+				prefix_ipv6_free(&ip6);
 				found = 1;
 			}
 		} else {
@@ -385,7 +385,7 @@ void isis_circuit_del_addr(struct isis_circuit *circuit,
 			}
 			if (ip6) {
 				listnode_delete(circuit->ipv6_non_link, ip6);
-				prefix_ipv6_free(ip6);
+				prefix_ipv6_free(&ip6);
 				found = 1;
 			}
 		}
@@ -393,8 +393,7 @@ void isis_circuit_del_addr(struct isis_circuit *circuit,
 		if (!found) {
 			prefix2str(connected->address, buf, sizeof(buf));
 			zlog_warn(
-				"Nonexistent ip address %s removal attempt from \
-		      circuit %s",
+				"Nonexistent ip address %s removal attempt from circuit %s",
 				buf, circuit->interface->name);
 			zlog_warn("Current ip addresses on %s:",
 				  circuit->interface->name);
@@ -416,7 +415,7 @@ void isis_circuit_del_addr(struct isis_circuit *circuit,
 			lsp_regenerate_schedule(circuit->area, circuit->is_type,
 						0);
 
-		prefix_ipv6_free(ipv6);
+		prefix_ipv6_free(&ipv6);
 	}
 	return;
 }
@@ -1385,7 +1384,6 @@ int isis_if_delete_hook(struct interface *ifp)
 	if (ifp && ifp->info) {
 		circuit = ifp->info;
 		isis_csm_state_change(IF_DOWN_FROM_Z, circuit, circuit->area);
-		isis_csm_state_change(ISIS_DISABLE, circuit, circuit->area);
 	}
 
 	return 0;

@@ -11,6 +11,13 @@ vrf aware and can work within the context of vrf's in order to
 do S,G mrouting.  Additionally PIM can be used in the EVPN underlay
 network for optimizing forwarding of overlay BUM traffic.
 
+.. note::
+
+   On Linux for PIM-SM operation you *must* have kernel version 4.18 or greater.
+   To use PIM for EVPN BUM forwarding, kernels 5.0 or greater are required.
+   OpenBSD has no multicast support and FreeBSD, NetBSD and Solaris only
+   have support for SSM.
+
 .. _starting-and-stopping-pimd:
 
 Starting and Stopping pimd
@@ -58,6 +65,14 @@ Certain signals have special meanings to *pimd*.
    first ip address is the RP's address and the second value is the matching
    prefix of group ranges covered. This command is vrf aware, to configure for
    a vrf, enter the vrf submode.
+
+.. index:: ip pim register-accept-list PLIST
+.. clicmd:: ip pim register-accept-list PLIST
+
+   When pim receives a register packet the source of the packet will be compared
+   to the prefix-list specified, PLIST, and if a permit is received normal
+   processing continues.  If a deny is returned for the source address of the
+   register packet a register stop message is sent to the source.
 
 .. index:: ip pim spt-switchover infinity-and-beyond
 .. clicmd:: ip pim spt-switchover infinity-and-beyond
@@ -151,6 +166,11 @@ Certain signals have special meanings to *pimd*.
    urib-only
       Lookup in the Unicast Rib only.
 
+.. index:: no ip msdp mesh-group [WORD]
+.. clicmd:: no ip msdp mesh-group [WORD]
+
+   Delete multicast source discovery protocol mesh-group
+
 .. index:: ip igmp generate-query-once [version (2-3)]
 .. clicmd:: ip igmp generate-query-once [version (2-3)]
 
@@ -166,6 +186,13 @@ PIM Interface Configuration
 PIM interface commands allow you to configure an interface as either a Receiver
 or a interface that you would like to form pim neighbors on. If the interface
 is in a vrf, enter the interface command with the vrf keyword at the end.
+
+.. index:: ip pim active-active
+.. clicmd:: ip pim active-active
+
+   Turn on pim active-active configuration for a Vxlan interface.  This
+   command will not do anything if you do not have the underlying ability
+   of a mlag implementation.
 
 .. index:: ip pim bfd
 .. clicmd:: ip pim bfd
@@ -197,8 +224,8 @@ is in a vrf, enter the interface command with the vrf keyword at the end.
 
    Set the pim hello and hold interval for a interface.
 
-.. index:: ip pim sm
-.. clicmd:: ip pim sm
+.. index:: ip pim
+.. clicmd:: ip pim
 
    Tell pim that we would like to use this interface to form pim neighbors
    over. Please note that this command does not enable the reception of IGMP
@@ -211,10 +238,10 @@ is in a vrf, enter the interface command with the vrf keyword at the end.
    Tell pim to receive IGMP reports and Query on this interface. The default
    version is v3. This command is useful on a LHR.
 
-.. index:: ip igmp join A.B.C.D A.B.C.D
-.. clicmd:: ip igmp join A.B.C.D A.B.C.D
+.. index:: ip igmp join A.B.C.D [A.B.C.D]
+.. clicmd:: ip igmp join A.B.C.D [A.B.C.D]
 
-   Join multicast source-group on an interface.
+   Join multicast group or source-group on an interface.
 
 .. index:: ip igmp query-interval (1-1800)
 .. clicmd:: ip igmp query-interval (1-1800)
@@ -251,6 +278,13 @@ is in a vrf, enter the interface command with the vrf keyword at the end.
    Set the IGMP last member query interval in deciseconds. The default value is
    10 deciseconds. 'no' form of this command is used to to configure back to the
    default value.
+
+.. index:: ip mroute INTERFACE A.B.C.D [A.B.C.D]
+.. clicmd:: ip mroute INTERFACE A.B.C.D [A.B.C.D]
+
+   Set a static multicast route for a traffic coming on the current interface to
+   be forwarded on the given interface if the traffic matches the group address
+   and optionally the source address.
 
 .. _pim-multicast-rib-insertion:
 
@@ -378,6 +412,11 @@ cause great confusion.
 
    Display information about interfaces PIM is using.
 
+.. index:: show ip pim mlag [vrf NAME] interface [detail|WORD] [json]
+.. clicmd:: show ip pim mlag [vrf NAME|all] interface [detail|WORD] [json]
+
+   Display mlag interface information.
+
 .. index:: show ip pim [vrf NAME] join [A.B.C.D [A.B.C.D]] [json]
 .. clicmd:: show ip pim join
 
@@ -389,6 +428,11 @@ cause great confusion.
 .. clicmd:: show ip pim local-membership
 
    Display information about PIM interface local-membership.
+
+.. index:: show ip pim mlag summary [json]
+.. clicmd:: show ip pim mlag summary [json]
+
+   Display mlag information state that PIM is keeping track of.
 
 .. index:: show ip pim neighbor
 .. clicmd:: show ip pim neighbor
@@ -446,6 +490,18 @@ cause great confusion.
 .. clicmd:: show ip pim upstream-rpf
 
    Display upstream information for S,G's and the RPF data associated with them.
+
+.. index:: show ip pim [vrf NAME] mlag upstream [A.B.C.D [A.B.C.D]] [json]
+.. clicmd:: show ip pim mlag upstream
+
+   Display upstream entries that are synced across MLAG switches.
+   Allow the user to specify sub Source and Groups address filters.
+
+.. index:: show ip pim mlag summary
+.. clicmd:: show ip pim mlag summary
+
+   Display PIM MLAG (multi-chassis link aggregation) session status and
+   control message statistics.
 
 .. index:: show ip pim bsr
 .. clicmd:: show ip pim bsr

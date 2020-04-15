@@ -98,12 +98,13 @@ static void ts_hash(const char *text, const char *expect)
 	unsigned i = 0;
 	uint8_t hash[32];
 	char hashtext[65];
-	uint32_t count;
+	uint32_t swap_count, count;
 
-	count = htonl(list_count(&head));
+	count = list_count(&head);
+	swap_count = htonl(count);
 
 	SHA256_Init(&ctx);
-	SHA256_Update(&ctx, &count, sizeof(count));
+	SHA256_Update(&ctx, &swap_count, sizeof(swap_count));
 
 	frr_each (list, &head, item) {
 		struct {
@@ -115,17 +116,17 @@ static void ts_hash(const char *text, const char *expect)
 		};
 		SHA256_Update(&ctx, &hashitem, sizeof(hashitem));
 		i++;
-		assert(i < count);
+		assert(i <= count);
 	}
 	SHA256_Final(hash, &ctx);
 
 	for (i = 0; i < sizeof(hash); i++)
 		sprintf(hashtext + i * 2, "%02x", hash[i]);
 
-	printf("%7"PRId64"us  %-25s %s%s\n", us, text,
+	printfrr("%7"PRId64"us  %-25s %s%s\n", us, text,
 	       expect ? " " : "*", hashtext);
 	if (expect && strcmp(expect, hashtext)) {
-		printf("%-21s %s\n", "EXPECTED:", expect);
+		printfrr("%-21s %s\n", "EXPECTED:", expect);
 		assert(0);
 	}
 	monotime(&ref);
@@ -148,7 +149,7 @@ static void concat(test_, TYPE)(void)
 	for (i = 0; i < NITEM; i++)
 		itm[i].val = i;
 
-	printf("%s start\n", str(TYPE));
+	printfrr("%s start\n", str(TYPE));
 	ts_start();
 
 	list_init(&head);
@@ -529,7 +530,7 @@ static void concat(test_, TYPE)(void)
 	list_fini(&head);
 	ts_ref("fini");
 	ts_end();
-	printf("%s end\n", str(TYPE));
+	printfrr("%s end\n", str(TYPE));
 }
 
 #undef ts_hashx

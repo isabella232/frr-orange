@@ -113,8 +113,6 @@ Suppose you have an interface ``eth0`` with the following configuration:
        link/ether 02:17:45:00:aa:aa brd ff:ff:ff:ff:ff:ff
        inet 10.0.2.15/24 brd 10.0.2.255 scope global dynamic eth0
           valid_lft 72532sec preferred_lft 72532sec
-       inet 10.0.2.16/24 brd 10.0.2.255 scope global dynamic eth0
-          valid_lft 72532sec preferred_lft 72532sec
        inet6 fe80::17:45ff:fe00:aaaa/64 scope link
           valid_lft forever preferred_lft forever
 
@@ -142,7 +140,7 @@ macvlan device. If you are using ``iproute2``, the equivalent configuration is:
    ip link set dev vrrp4-2-1 up
 
    ip link add vrrp6-2-1 link eth0 addrgenmode random type macvlan mode bridge
-   ip link set dev vrrp4-2-1 address 00:00:5e:00:02:05
+   ip link set dev vrrp6-2-1 address 00:00:5e:00:02:05
    ip addr add 2001:db8::370:7334/64 dev vrrp6-2-1
    ip link set dev vrrp6-2-1 up
 
@@ -172,6 +170,8 @@ Using ``vrrp4-2-1`` as an example, a few things to note about this interface:
   egress via ``eth0``
 - Its MAC address is set to the VRRP IPv4 virtual MAC specified by the RFC for
   :abbr:`VRID (Virtual Router ID)` ``5``
+- The :abbr:`VIP (Virtual IP)` address ``10.0.2.16`` must not be present on
+  the parent interface ``eth0``.
 - The link local address on the interface is not derived from the interface
   MAC
 

@@ -190,7 +190,7 @@ static int zebra_ptm_flush_messages(struct thread *thread)
 		ptm_cb.t_timer = NULL;
 		thread_add_timer(zrouter.master, zebra_ptm_connect, NULL,
 				 ptm_cb.reconnect_time, &ptm_cb.t_timer);
-		return (-1);
+		return -1;
 	case BUFFER_PENDING:
 		ptm_cb.t_write = NULL;
 		thread_add_write(zrouter.master, zebra_ptm_flush_messages, NULL,
@@ -200,7 +200,7 @@ static int zebra_ptm_flush_messages(struct thread *thread)
 		break;
 	}
 
-	return (0);
+	return 0;
 }
 
 static int zebra_ptm_send_message(char *data, int size)
@@ -390,7 +390,7 @@ static int zebra_ptm_socket_init(void)
 	if (set_nonblocking(sock) < 0) {
 		if (IS_ZEBRA_DEBUG_EVENT)
 			zlog_debug("%s: Unable to set socket non blocking[%s]",
-				   __PRETTY_FUNCTION__, safe_strerror(errno));
+				   __func__, safe_strerror(errno));
 		close(sock);
 		return -1;
 	}
@@ -441,15 +441,17 @@ static void if_bfd_session_update(struct interface *ifp, struct prefix *dp,
 				dp->prefixlen, ifp->name,
 				bfd_get_status_str(status));
 		} else {
+			struct vrf *vrf = vrf_lookup_by_id(vrf_id);
+
 			zlog_debug(
 				"MESSAGE: ZEBRA_INTERFACE_BFD_DEST_UPDATE %s/%d "
-				"with src %s/%d and vrf %u %s event",
+				"with src %s/%d and vrf %s(%u) %s event",
 				inet_ntop(dp->family, &dp->u.prefix, buf[0],
 					  INET6_ADDRSTRLEN),
 				dp->prefixlen,
 				inet_ntop(sp->family, &sp->u.prefix, buf[1],
 					  INET6_ADDRSTRLEN),
-				sp->prefixlen, vrf_id,
+				sp->prefixlen, VRF_LOGNAME(vrf), vrf_id,
 				bfd_get_status_str(status));
 		}
 	}
@@ -661,7 +663,7 @@ int zebra_ptm_sock_read(struct thread *thread)
 		thread_add_timer(zrouter.master, zebra_ptm_connect, NULL,
 				 ptm_cb.reconnect_time,
 				 &ptm_cb.t_timer);
-		return (-1);
+		return -1;
 	}
 
 	ptm_cb.t_read = NULL;
@@ -1402,39 +1404,28 @@ static void _zebra_ptm_reroute(struct zserv *zs, struct zebra_vrf *zvrf,
 			       struct stream *msg, uint32_t command)
 {
 	struct stream *msgc;
-	size_t zmsglen, zhdrlen;
+	char buf[ZEBRA_MAX_PACKET_SIZ];
 	pid_t ppid;
 
-	/*
-	 * Don't modify message in the zebra API. In order to do that we
-	 * need to allocate a new message stream and copy the message
-	 * provided by zebra.
-	 */
+	/* Create BFD header */
 	msgc = stream_new(ZEBRA_MAX_PACKET_SIZ);
-	if (msgc == NULL) {
-		zlog_debug("%s: not enough memory", __func__);
-		return;
-	}
-
-	/* Calculate our header size plus the message contents. */
-	zhdrlen = ZEBRA_HEADER_SIZE + sizeof(uint32_t);
-	zmsglen = msg->endp - msg->getp;
-	memcpy(msgc->data + zhdrlen, msg->data + msg->getp, zmsglen);
-
-	/*
-	 * The message type will be BFD_DEST_REPLY so we can use only
-	 * one callback at the `bfdd` side, however the real command
-	 * number will be included right after the zebra header.
-	 */
 	zclient_create_header(msgc, ZEBRA_BFD_DEST_REPLAY, zvrf->vrf->vrf_id);
 	stream_putl(msgc, command);
 
-	/* Update the data pointers. */
-	msgc->getp = 0;
-	msgc->endp = zhdrlen + zmsglen;
-	stream_putw_at(msgc, 0, stream_get_endp(msgc));
+	if (STREAM_READABLE(msg) > STREAM_WRITEABLE(msgc)) {
+		zlog_warn("Cannot fit extended BFD header plus original message contents into ZAPI packet; dropping message");
+		goto stream_failure;
+	}
+
+	/* Copy original message, excluding header, into new message */
+	stream_get_from(buf, msg, stream_get_getp(msg), STREAM_READABLE(msg));
+	stream_put(msgc, buf, STREAM_READABLE(msg));
+
+	/* Update length field */
+	stream_putw_at(msgc, 0, STREAM_READABLE(msgc));
 
 	zebra_ptm_send_bfdd(msgc);
+	msgc = NULL;
 
 	/* Registrate process PID for shutdown hook. */
 	STREAM_GETL(msg, ppid);
@@ -1443,6 +1434,8 @@ static void _zebra_ptm_reroute(struct zserv *zs, struct zebra_vrf *zvrf,
 	return;
 
 stream_failure:
+	if (msgc)
+		stream_free(msgc);
 	zlog_err("%s:%d failed to registrate client pid", __FILE__, __LINE__);
 }
 

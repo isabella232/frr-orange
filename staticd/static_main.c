@@ -36,6 +36,7 @@
 #include "static_vty.h"
 #include "static_routes.h"
 #include "static_zebra.h"
+#include "static_debug.h"
 
 char backup_config_file[256];
 
@@ -72,6 +73,8 @@ static void sigint(void)
 {
 	zlog_notice("Terminating on signal");
 
+	static_vrf_terminate();
+
 	exit(0);
 }
 
@@ -100,7 +103,7 @@ struct quagga_signal_t static_signals[] = {
 	},
 };
 
-static const struct frr_yang_module_info *staticd_yang_modules[] = {
+static const struct frr_yang_module_info *const staticd_yang_modules[] = {
 };
 
 #define STATIC_VTY_PORT 2616
@@ -141,6 +144,7 @@ int main(int argc, char **argv, char **envp)
 	master = frr_init();
 
 	access_list_init();
+	static_debug_init();
 	static_vrf_init();
 
 	static_zebra_init();

@@ -29,7 +29,6 @@
 
 #include "memory.h"
 #include "vrf.h"
-#include "memory_vty.h"
 #include "filter.h"
 #include "vty.h"
 #include "sigevent.h"
@@ -38,6 +37,7 @@
 #include "plist.h"
 #include "vrf.h"
 #include "libfrr.h"
+#include "routemap.h"
 
 #include "pimd.h"
 #include "pim_instance.h"
@@ -47,6 +47,7 @@
 #include "pim_msdp.h"
 #include "pim_iface.h"
 #include "pim_bfd.h"
+#include "pim_mlag.h"
 #include "pim_errors.h"
 
 extern struct host host;
@@ -71,8 +72,9 @@ struct zebra_privs_t pimd_privs = {
 	.cap_num_p = array_size(_caps_p),
 	.cap_num_i = 0};
 
-static const struct frr_yang_module_info *pimd_yang_modules[] = {
+static const struct frr_yang_module_info *const pimd_yang_modules[] = {
 	&frr_interface_info,
+	&frr_route_map_info,
 };
 
 FRR_DAEMON_INFO(pimd, PIM, .vty_port = PIMD_VTY_PORT,
@@ -131,6 +133,7 @@ int main(int argc, char **argv, char **envp)
 			  pim_ifp_down, pim_ifp_destroy);
 	pim_zebra_init();
 	pim_bfd_init();
+	pim_mlag_init();
 
 	frr_config_fork();
 

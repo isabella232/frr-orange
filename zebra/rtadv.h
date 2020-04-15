@@ -37,6 +37,9 @@ struct rtadv_prefix {
 	/* Prefix to be advertised. */
 	struct prefix_ipv6 prefix;
 
+	/* The prefix was manually/automatically defined. */
+	int AdvPrefixCreate;
+
 	/* The value to be placed in the Valid Lifetime in the Prefix */
 	uint32_t AdvValidLifetime;
 #define RTADV_VALID_LIFETIME 2592000
@@ -58,6 +61,11 @@ struct rtadv_prefix {
 #define ND_OPT_PI_FLAG_RADDR         0x20
 #endif
 };
+
+/* RFC4861 minimum delay between RAs  */
+#ifndef MIN_DELAY_BETWEEN_RAS
+#define MIN_DELAY_BETWEEN_RAS        3000
+#endif
 
 /* RFC4584 Extension to Sockets API for Mobile IPv6 */
 
@@ -126,9 +134,18 @@ struct nd_opt_dnssl { /* DNS search list option [RFC8106 5.2] */
 } __attribute__((__packed__));
 #endif
 
-extern const char *rtadv_pref_strs[];
-
 #endif /* HAVE_RTADV */
+
+/*
+ * ipv6 nd prefixes can be manually defined, derived from the kernel interface
+ * configs or both.  If both, manual flag/timer settings are used.
+ */
+enum ipv6_nd_prefix_source {
+	PREFIX_SRC_NONE = 0,
+	PREFIX_SRC_MANUAL,
+	PREFIX_SRC_AUTO,
+	PREFIX_SRC_BOTH,
+};
 
 typedef enum {
 	RA_ENABLE = 0,
@@ -136,10 +153,15 @@ typedef enum {
 } ipv6_nd_suppress_ra_status;
 
 extern void rtadv_init(struct zebra_vrf *zvrf);
-extern void rtadv_terminate(struct zebra_vrf *zvrf);
+extern void rtadv_vrf_terminate(struct zebra_vrf *zvrf);
+extern void rtadv_terminate(void);
+extern void rtadv_stop_ra(struct interface *ifp);
+extern void rtadv_stop_ra_all(void);
 extern void rtadv_cmd_init(void);
 extern void zebra_interface_radv_disable(ZAPI_HANDLER_ARGS);
 extern void zebra_interface_radv_enable(ZAPI_HANDLER_ARGS);
+extern void rtadv_add_prefix(struct zebra_if *zif, const struct prefix_ipv6 *p);
+extern void rtadv_delete_prefix(struct zebra_if *zif, const struct prefix *p);
 
 #ifdef __cplusplus
 }

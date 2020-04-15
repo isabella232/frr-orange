@@ -46,6 +46,7 @@
 #include "northbound_cli.h"
 
 #include "ripd/ripd.h"
+#include "ripd/rip_nb.h"
 #include "ripd/rip_debug.h"
 #include "ripd/rip_errors.h"
 #include "ripd/rip_interface.h"
@@ -103,7 +104,7 @@ static int sockopt_broadcast(int sock)
 	int on = 1;
 
 	ret = setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char *)&on,
-			 sizeof on);
+			 sizeof(on));
 	if (ret < 0) {
 		zlog_warn("can't set sockopt SO_BROADCAST to socket %d", sock);
 		return -1;
@@ -1222,7 +1223,8 @@ static void rip_response_process(struct rip_packet *packet, int size,
 		}
 
 		/* RIPv1 does not have nexthop value. */
-		if (packet->version == RIPv1 && rte->nexthop.s_addr != 0) {
+		if (packet->version == RIPv1
+		    && rte->nexthop.s_addr != INADDR_ANY) {
 			zlog_info("RIPv1 packet with nexthop value %s",
 				  inet_ntoa(rte->nexthop));
 			rip_peer_bad_route(rip, from);
@@ -1233,7 +1235,8 @@ static void rip_response_process(struct rip_packet *packet, int size,
 		   sub-optimal, but absolutely valid, route may be taken.  If
 		   the received Next Hop is not directly reachable, it should be
 		   treated as 0.0.0.0. */
-		if (packet->version == RIPv2 && rte->nexthop.s_addr != 0) {
+		if (packet->version == RIPv2
+		    && rte->nexthop.s_addr != INADDR_ANY) {
 			uint32_t addrval;
 
 			/* Multicast address check. */
@@ -1271,7 +1274,8 @@ static void rip_response_process(struct rip_packet *packet, int size,
 								"Next hop %s is not directly reachable. Treat it as 0.0.0.0",
 								inet_ntoa(
 									rte->nexthop));
-						rte->nexthop.s_addr = 0;
+						rte->nexthop.s_addr =
+							INADDR_ANY;
 					}
 
 					route_unlock_node(rn);
@@ -1281,7 +1285,7 @@ static void rip_response_process(struct rip_packet *packet, int size,
 							"Next hop %s is not directly reachable. Treat it as 0.0.0.0",
 							inet_ntoa(
 								rte->nexthop));
-					rte->nexthop.s_addr = 0;
+					rte->nexthop.s_addr = INADDR_ANY;
 				}
 			}
 		}
@@ -1296,10 +1300,11 @@ static void rip_response_process(struct rip_packet *packet, int size,
 		   (/16 for class B's) except when the RIP packet does to inside
 		   the classful network in question.  */
 
-		if ((packet->version == RIPv1 && rte->prefix.s_addr != 0)
+		if ((packet->version == RIPv1
+		     && rte->prefix.s_addr != INADDR_ANY)
 		    || (packet->version == RIPv2
-			&& (rte->prefix.s_addr != 0
-			    && rte->mask.s_addr == 0))) {
+			&& (rte->prefix.s_addr != INADDR_ANY
+			    && rte->mask.s_addr == INADDR_ANY))) {
 			uint32_t destination;
 
 			if (subnetted == -1) {
@@ -1351,7 +1356,8 @@ static void rip_response_process(struct rip_packet *packet, int size,
 
 		/* In case of RIPv2, if prefix in RTE is not netmask applied one
 		   ignore the entry.  */
-		if ((packet->version == RIPv2) && (rte->mask.s_addr != 0)
+		if ((packet->version == RIPv2)
+		    && (rte->mask.s_addr != INADDR_ANY)
 		    && ((rte->prefix.s_addr & rte->mask.s_addr)
 			!= rte->prefix.s_addr)) {
 			zlog_warn(
@@ -1362,12 +1368,13 @@ static void rip_response_process(struct rip_packet *packet, int size,
 		}
 
 		/* Default route's netmask is ignored. */
-		if (packet->version == RIPv2 && (rte->prefix.s_addr == 0)
-		    && (rte->mask.s_addr != 0)) {
+		if (packet->version == RIPv2
+		    && (rte->prefix.s_addr == INADDR_ANY)
+		    && (rte->mask.s_addr != INADDR_ANY)) {
 			if (IS_RIP_DEBUG_EVENT)
 				zlog_debug(
 					"Default route with non-zero netmask.  Set zero to netmask");
-			rte->mask.s_addr = 0;
+			rte->mask.s_addr = INADDR_ANY;
 		}
 
 		/* Routing table updates. */
@@ -3013,20 +3020,20 @@ void rip_ecmp_disable(struct rip *rip)
 static void rip_vty_out_uptime(struct vty *vty, struct rip_info *rinfo)
 {
 	time_t clock;
-	struct tm *tm;
+	struct tm tm;
 #define TIME_BUF 25
 	char timebuf[TIME_BUF];
 	struct thread *thread;
 
 	if ((thread = rinfo->t_timeout) != NULL) {
 		clock = thread_timer_remain_second(thread);
-		tm = gmtime(&clock);
-		strftime(timebuf, TIME_BUF, "%M:%S", tm);
+		gmtime_r(&clock, &tm);
+		strftime(timebuf, TIME_BUF, "%M:%S", &tm);
 		vty_out(vty, "%5s", timebuf);
 	} else if ((thread = rinfo->t_garbage_collect) != NULL) {
 		clock = thread_timer_remain_second(thread);
-		tm = gmtime(&clock);
-		strftime(timebuf, TIME_BUF, "%M:%S", tm);
+		gmtime_r(&clock, &tm);
+		strftime(timebuf, TIME_BUF, "%M:%S", &tm);
 		vty_out(vty, "%5s", timebuf);
 	}
 }
@@ -3669,8 +3676,7 @@ static int rip_vrf_enable(struct vrf *vrf)
 				running_config->version++;
 			}
 		}
-		if (old_vrf_name)
-			XFREE(MTYPE_RIP_VRF_NAME, old_vrf_name);
+		XFREE(MTYPE_RIP_VRF_NAME, old_vrf_name);
 	}
 	if (!rip || rip->enabled)
 		return 0;

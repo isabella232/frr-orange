@@ -23,16 +23,16 @@
 #include "table.h"
 #include "memory.h"
 #include "command.h"
-#include "if.h"
 #include "log.h"
 #include "sockunion.h"
 #include "linklist.h"
-#include "thread.h"
 #include "prefix.h"
 #include "nexthop.h"
 #include "mpls.h"
 #include "jhash.h"
 #include "printfrr.h"
+#include "vrf.h"
+#include "nexthop_group.h"
 
 DEFINE_MTYPE_STATIC(LIB, NEXTHOP, "Nexthop")
 DEFINE_MTYPE_STATIC(LIB, NH_LABEL, "Nexthop label")
@@ -117,6 +117,12 @@ static int _nexthop_cmp_no_labels(const struct nexthop *next1,
 	if (next1->type > next2->type)
 		return 1;
 
+	if (next1->weight < next2->weight)
+		return -1;
+
+	if (next1->weight > next2->weight)
+		return 1;
+
 	switch (next1->type) {
 	case NEXTHOP_TYPE_IPV4:
 	case NEXTHOP_TYPE_IPV6:
@@ -147,7 +153,24 @@ static int _nexthop_cmp_no_labels(const struct nexthop *next1,
 	}
 
 	ret = _nexthop_source_cmp(next1, next2);
+	if (ret != 0)
+		goto done;
 
+	if (!CHECK_FLAG(next1->flags, NEXTHOP_FLAG_HAS_BACKUP) &&
+	    CHECK_FLAG(next2->flags, NEXTHOP_FLAG_HAS_BACKUP))
+		return -1;
+
+	if (CHECK_FLAG(next1->flags, NEXTHOP_FLAG_HAS_BACKUP) &&
+	    !CHECK_FLAG(next2->flags, NEXTHOP_FLAG_HAS_BACKUP))
+		return 1;
+
+	if (next1->backup_idx < next2->backup_idx)
+		return -1;
+
+	if (next1->backup_idx > next2->backup_idx)
+		return 1;
+
+done:
 	return ret;
 }
 
@@ -200,7 +223,7 @@ int nexthop_same_firsthop(struct nexthop *next1, struct nexthop *next2)
  */
 const char *nexthop_type_to_str(enum nexthop_types_t nh_type)
 {
-	static const char *desc[] = {
+	static const char *const desc[] = {
 		"none",		 "Directly connected",
 		"IPv4 nexthop",  "IPv4 nexthop with ifindex",
 		"IPv6 nexthop",  "IPv6 nexthop with ifindex",
@@ -223,7 +246,23 @@ bool nexthop_labels_match(const struct nexthop *nh1, const struct nexthop *nh2)
 
 struct nexthop *nexthop_new(void)
 {
-	return XCALLOC(MTYPE_NEXTHOP, sizeof(struct nexthop));
+	struct nexthop *nh;
+
+	nh = XCALLOC(MTYPE_NEXTHOP, sizeof(struct nexthop));
+
+	/*
+	 * Default the weight to 1 here for all nexthops.
+	 * The linux kernel does some weird stuff with adding +1 to
+	 * all nexthop weights it gets over netlink.
+	 * To handle this, just default everything to 1 right from
+	 * from the beginning so we don't have to special case
+	 * default weights in the linux netlink code.
+	 *
+	 * 1 should be a valid on all platforms anyway.
+	 */
+	nh->weight = 1;
+
+	return nh;
 }
 
 /* Free nexthop. */
@@ -281,30 +320,123 @@ bool nexthop_same_no_labels(const struct nexthop *nh1,
 	return true;
 }
 
+/*
+ * Allocate a new nexthop object and initialize it from various args.
+ */
+struct nexthop *nexthop_from_ifindex(ifindex_t ifindex, vrf_id_t vrf_id)
+{
+	struct nexthop *nexthop;
+
+	nexthop = nexthop_new();
+	nexthop->type = NEXTHOP_TYPE_IFINDEX;
+	nexthop->ifindex = ifindex;
+	nexthop->vrf_id = vrf_id;
+
+	return nexthop;
+}
+
+struct nexthop *nexthop_from_ipv4(const struct in_addr *ipv4,
+				  const struct in_addr *src,
+				  vrf_id_t vrf_id)
+{
+	struct nexthop *nexthop;
+
+	nexthop = nexthop_new();
+	nexthop->type = NEXTHOP_TYPE_IPV4;
+	nexthop->vrf_id = vrf_id;
+	nexthop->gate.ipv4 = *ipv4;
+	if (src)
+		nexthop->src.ipv4 = *src;
+
+	return nexthop;
+}
+
+struct nexthop *nexthop_from_ipv4_ifindex(const struct in_addr *ipv4,
+					  const struct in_addr *src,
+					  ifindex_t ifindex, vrf_id_t vrf_id)
+{
+	struct nexthop *nexthop;
+
+	nexthop = nexthop_new();
+	nexthop->type = NEXTHOP_TYPE_IPV4_IFINDEX;
+	nexthop->vrf_id = vrf_id;
+	nexthop->gate.ipv4 = *ipv4;
+	if (src)
+		nexthop->src.ipv4 = *src;
+	nexthop->ifindex = ifindex;
+
+	return nexthop;
+}
+
+struct nexthop *nexthop_from_ipv6(const struct in6_addr *ipv6,
+				  vrf_id_t vrf_id)
+{
+	struct nexthop *nexthop;
+
+	nexthop = nexthop_new();
+	nexthop->vrf_id = vrf_id;
+	nexthop->type = NEXTHOP_TYPE_IPV6;
+	nexthop->gate.ipv6 = *ipv6;
+
+	return nexthop;
+}
+
+struct nexthop *nexthop_from_ipv6_ifindex(const struct in6_addr *ipv6,
+					  ifindex_t ifindex, vrf_id_t vrf_id)
+{
+	struct nexthop *nexthop;
+
+	nexthop = nexthop_new();
+	nexthop->vrf_id = vrf_id;
+	nexthop->type = NEXTHOP_TYPE_IPV6_IFINDEX;
+	nexthop->gate.ipv6 = *ipv6;
+	nexthop->ifindex = ifindex;
+
+	return nexthop;
+}
+
+struct nexthop *nexthop_from_blackhole(enum blackhole_type bh_type)
+{
+	struct nexthop *nexthop;
+
+	nexthop = nexthop_new();
+	nexthop->vrf_id = VRF_DEFAULT;
+	nexthop->type = NEXTHOP_TYPE_BLACKHOLE;
+	nexthop->bh_type = bh_type;
+
+	return nexthop;
+}
+
 /* Update nexthop with label information. */
-void nexthop_add_labels(struct nexthop *nexthop, enum lsp_types_t type,
-			uint8_t num_labels, mpls_label_t *label)
+void nexthop_add_labels(struct nexthop *nexthop, enum lsp_types_t ltype,
+			uint8_t num_labels, const mpls_label_t *labels)
 {
 	struct mpls_label_stack *nh_label;
 	int i;
 
-	nexthop->nh_label_type = type;
+	if (num_labels == 0)
+		return;
+
+	/* Enforce limit on label stack size */
+	if (num_labels > MPLS_MAX_LABELS)
+		num_labels = MPLS_MAX_LABELS;
+
+	nexthop->nh_label_type = ltype;
+
 	nh_label = XCALLOC(MTYPE_NH_LABEL,
 			   sizeof(struct mpls_label_stack)
 				   + num_labels * sizeof(mpls_label_t));
 	nh_label->num_labels = num_labels;
 	for (i = 0; i < num_labels; i++)
-		nh_label->label[i] = *(label + i);
+		nh_label->label[i] = *(labels + i);
 	nexthop->nh_label = nh_label;
 }
 
 /* Free label information of nexthop, if present. */
 void nexthop_del_labels(struct nexthop *nexthop)
 {
-	if (nexthop->nh_label) {
-		XFREE(MTYPE_NH_LABEL, nexthop->nh_label);
-		nexthop->nh_label_type = ZEBRA_LSP_NONE;
-	}
+	XFREE(MTYPE_NH_LABEL, nexthop->nh_label);
+	nexthop->nh_label_type = ZEBRA_LSP_NONE;
 }
 
 const char *nexthop2str(const struct nexthop *nexthop, char *str, int size)
@@ -349,7 +481,7 @@ const char *nexthop2str(const struct nexthop *nexthop, char *str, int size)
  * left branch is 'resolved' and right branch is 'next':
  * https://en.wikipedia.org/wiki/Tree_traversal#/media/File:Sorted_binary_tree_preorder.svg
  */
-struct nexthop *nexthop_next(struct nexthop *nexthop)
+struct nexthop *nexthop_next(const struct nexthop *nexthop)
 {
 	if (CHECK_FLAG(nexthop->flags, NEXTHOP_FLAG_RECURSIVE))
 		return nexthop->resolved;
@@ -364,6 +496,19 @@ struct nexthop *nexthop_next(struct nexthop *nexthop)
 	return NULL;
 }
 
+/* Return the next nexthop in the tree that is resolved and active */
+struct nexthop *nexthop_next_active_resolved(const struct nexthop *nexthop)
+{
+	struct nexthop *next = nexthop_next(nexthop);
+
+	while (next
+	       && (CHECK_FLAG(next->flags, NEXTHOP_FLAG_RECURSIVE)
+		   || !CHECK_FLAG(next->flags, NEXTHOP_FLAG_ACTIVE)))
+		next = nexthop_next(next);
+
+	return next;
+}
+
 unsigned int nexthop_level(struct nexthop *nexthop)
 {
 	unsigned int rv = 0;
@@ -374,16 +519,14 @@ unsigned int nexthop_level(struct nexthop *nexthop)
 	return rv;
 }
 
-uint32_t nexthop_hash(const struct nexthop *nexthop)
+/* Only hash word-sized things, let cmp do the rest. */
+uint32_t nexthop_hash_quick(const struct nexthop *nexthop)
 {
 	uint32_t key = 0x45afe398;
+	uint32_t val;
 
 	key = jhash_3words(nexthop->type, nexthop->vrf_id,
 			   nexthop->nh_label_type, key);
-	/* gate and blackhole are together in a union */
-	key = jhash(&nexthop->gate, sizeof(nexthop->gate), key);
-	key = jhash(&nexthop->src, sizeof(nexthop->src), key);
-	key = jhash(&nexthop->rmap_src, sizeof(nexthop->rmap_src), key);
 
 	if (nexthop->nh_label) {
 		int labels = nexthop->nh_label->num_labels;
@@ -410,27 +553,52 @@ uint32_t nexthop_hash(const struct nexthop *nexthop)
 			key = jhash_1word(nexthop->nh_label->label[i], key);
 	}
 
-	switch (nexthop->type) {
-	case NEXTHOP_TYPE_IPV4_IFINDEX:
-	case NEXTHOP_TYPE_IPV6_IFINDEX:
-	case NEXTHOP_TYPE_IFINDEX:
-		key = jhash_1word(nexthop->ifindex, key);
-		break;
-	case NEXTHOP_TYPE_BLACKHOLE:
-	case NEXTHOP_TYPE_IPV4:
-	case NEXTHOP_TYPE_IPV6:
-		break;
-	}
+	val = 0;
+	if (CHECK_FLAG(nexthop->flags, NEXTHOP_FLAG_HAS_BACKUP))
+		val = (uint32_t)nexthop->backup_idx;
+
+	key = jhash_3words(nexthop->ifindex,
+			   CHECK_FLAG(nexthop->flags, NEXTHOP_FLAG_ONLINK), val,
+			   key);
+
 	return key;
 }
 
-void nexthop_copy(struct nexthop *copy, const struct nexthop *nexthop,
-		  struct nexthop *rparent)
+
+#define GATE_SIZE 4 /* Number of uint32_t words in struct g_addr */
+
+/* For a more granular hash */
+uint32_t nexthop_hash(const struct nexthop *nexthop)
+{
+	uint32_t gate_src_rmap_raw[GATE_SIZE * 3] = {};
+	/* Get all the quick stuff */
+	uint32_t key = nexthop_hash_quick(nexthop);
+
+	assert(((sizeof(nexthop->gate) + sizeof(nexthop->src)
+		 + sizeof(nexthop->rmap_src))
+		/ 3)
+	       == (GATE_SIZE * sizeof(uint32_t)));
+
+	memcpy(gate_src_rmap_raw, &nexthop->gate, GATE_SIZE);
+	memcpy(gate_src_rmap_raw + GATE_SIZE, &nexthop->src, GATE_SIZE);
+	memcpy(gate_src_rmap_raw + (2 * GATE_SIZE), &nexthop->rmap_src,
+	       GATE_SIZE);
+
+	key = jhash2(gate_src_rmap_raw, (GATE_SIZE * 3), key);
+
+	return key;
+}
+
+void nexthop_copy_no_recurse(struct nexthop *copy,
+			     const struct nexthop *nexthop,
+			     struct nexthop *rparent)
 {
 	copy->vrf_id = nexthop->vrf_id;
 	copy->ifindex = nexthop->ifindex;
 	copy->type = nexthop->type;
 	copy->flags = nexthop->flags;
+	copy->weight = nexthop->weight;
+	copy->backup_idx = nexthop->backup_idx;
 	memcpy(&copy->gate, &nexthop->gate, sizeof(nexthop->gate));
 	memcpy(&copy->src, &nexthop->src, sizeof(nexthop->src));
 	memcpy(&copy->rmap_src, &nexthop->rmap_src, sizeof(nexthop->rmap_src));
@@ -439,6 +607,28 @@ void nexthop_copy(struct nexthop *copy, const struct nexthop *nexthop,
 		nexthop_add_labels(copy, nexthop->nh_label_type,
 				   nexthop->nh_label->num_labels,
 				   &nexthop->nh_label->label[0]);
+}
+
+void nexthop_copy(struct nexthop *copy, const struct nexthop *nexthop,
+		  struct nexthop *rparent)
+{
+	nexthop_copy_no_recurse(copy, nexthop, rparent);
+
+	/* Bit of a special case here, we need to handle the case
+	 * of a nexthop resolving to agroup. Hence, we need to
+	 * use a nexthop_group API.
+	 */
+	if (CHECK_FLAG(copy->flags, NEXTHOP_FLAG_RECURSIVE))
+		copy_nexthops(&copy->resolved, nexthop->resolved, copy);
+}
+
+struct nexthop *nexthop_dup_no_recurse(const struct nexthop *nexthop,
+				       struct nexthop *rparent)
+{
+	struct nexthop *new = nexthop_new();
+
+	nexthop_copy_no_recurse(new, nexthop, rparent);
+	return new;
 }
 
 struct nexthop *nexthop_dup(const struct nexthop *nexthop,

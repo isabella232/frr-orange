@@ -138,7 +138,7 @@ void eigrp_prefix_entry_add(struct route_table *topology,
 
 			zlog_debug(
 				"%s: %s Should we have found this entry in the topo table?",
-				__PRETTY_FUNCTION__,
+				__func__,
 				prefix2str(pe->destination, buf, sizeof(buf)));
 		}
 		route_unlock_node(rn);
@@ -197,7 +197,7 @@ void eigrp_prefix_entry_delete(struct eigrp *eigrp, struct route_table *table,
 	list_delete(&pe->entries);
 	list_delete(&pe->rij);
 	eigrp_zebra_route_delete(eigrp, pe->destination);
-	prefix_free(pe->destination);
+	prefix_free(&pe->destination);
 
 	rn->info = NULL;
 	route_unlock_node(rn); // Lookup above
@@ -402,7 +402,7 @@ eigrp_topology_update_distance(struct eigrp_fsm_action_message *msg)
 		break;
 	default:
 		flog_err(EC_LIB_DEVELOPMENT, "%s: Please implement handler",
-			 __PRETTY_FUNCTION__);
+			 __func__);
 		break;
 	}
 distance_done:

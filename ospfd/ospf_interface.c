@@ -272,8 +272,8 @@ struct ospf_interface *ospf_if_new(struct ospf *ospf, struct interface *ifp,
 
 	if (IS_DEBUG_OSPF_EVENT)
 		zlog_debug("%s: ospf interface %s vrf %s id %u created",
-			   __PRETTY_FUNCTION__, ifp->name,
-			   ospf_vrf_id_to_name(ospf->vrf_id), ospf->vrf_id);
+			   __func__, ifp->name, ospf_get_name(ospf),
+			   ospf->vrf_id);
 
 	return oi;
 }
@@ -349,7 +349,7 @@ void ospf_if_free(struct ospf_interface *oi)
 
 	if (IS_DEBUG_OSPF_EVENT)
 		zlog_debug("%s: ospf interface %s vrf %s id %u deleted",
-			   __PRETTY_FUNCTION__, oi->ifp->name,
+			   __func__, oi->ifp->name,
 			   ospf_vrf_id_to_name(oi->ifp->vrf_id),
 			   oi->ifp->vrf_id);
 
@@ -636,8 +636,12 @@ void ospf_if_update_params(struct interface *ifp, struct in_addr addr)
 int ospf_if_new_hook(struct interface *ifp)
 {
 	int rc = 0;
+	struct ospf_if_info *oii;
 
 	ifp->info = XCALLOC(MTYPE_OSPF_IF_INFO, sizeof(struct ospf_if_info));
+
+	oii = ifp->info;
+	oii->curr_mtu = ifp->mtu;
 
 	IF_OIFS(ifp) = route_table_init();
 	IF_OIFS_PARAMS(ifp) = route_table_init();
@@ -690,7 +694,6 @@ static int ospf_if_delete_hook(struct interface *ifp)
 
 	ospf_del_if_params((struct ospf_if_params *)IF_DEF_PARAMS(ifp));
 	XFREE(MTYPE_OSPF_IF_INFO, ifp->info);
-	ifp->info = NULL;
 
 	return rc;
 }
@@ -832,7 +835,7 @@ struct ospf_interface *ospf_vl_new(struct ospf *ospf,
 	struct prefix_ipv4 *p;
 
 	if (IS_DEBUG_OSPF_EVENT)
-		zlog_debug("ospf_vl_new(): Start");
+		zlog_debug("ospf_vl_new()(%s): Start", ospf_get_name(ospf));
 	if (vlink_count == OSPF_VL_MAX_COUNT) {
 		if (IS_DEBUG_OSPF_EVENT)
 			zlog_debug(
@@ -859,7 +862,7 @@ struct ospf_interface *ospf_vl_new(struct ospf *ospf,
 
 	p = prefix_ipv4_new();
 	p->family = AF_INET;
-	p->prefix.s_addr = 0;
+	p->prefix.s_addr = INADDR_ANY;
 	p->prefixlen = 0;
 
 	co->address = (struct prefix *)p;
@@ -882,7 +885,7 @@ struct ospf_interface *ospf_vl_new(struct ospf *ospf,
 	if (IS_DEBUG_OSPF_EVENT)
 		zlog_debug("ospf_vl_new(): set if->name to %s", vi->name);
 
-	area_id.s_addr = 0;
+	area_id.s_addr = INADDR_ANY;
 	area = ospf_area_get(ospf, area_id);
 	voi->area = area;
 
@@ -903,10 +906,11 @@ struct ospf_interface *ospf_vl_new(struct ospf *ospf,
 static void ospf_vl_if_delete(struct ospf_vl_data *vl_data)
 {
 	struct interface *ifp = vl_data->vl_oi->ifp;
-	vl_data->vl_oi->address->u.prefix4.s_addr = 0;
+
+	vl_data->vl_oi->address->u.prefix4.s_addr = INADDR_ANY;
 	vl_data->vl_oi->address->prefixlen = 0;
 	ospf_if_free(vl_data->vl_oi);
-	if_delete(ifp);
+	if_delete(&ifp);
 	vlink_count--;
 }
 
@@ -967,7 +971,7 @@ static void ospf_vl_shutdown(struct ospf_vl_data *vl_data)
 	if ((oi = vl_data->vl_oi) == NULL)
 		return;
 
-	oi->address->u.prefix4.s_addr = 0;
+	oi->address->u.prefix4.s_addr = INADDR_ANY;
 	oi->address->prefixlen = 0;
 
 	UNSET_FLAG(oi->ifp->flags, IFF_UP);
@@ -1262,31 +1266,21 @@ static int ospf_ifp_up(struct interface *ifp)
 {
 	struct ospf_interface *oi;
 	struct route_node *rn;
+	struct ospf_if_info *oii = ifp->info;
 
-	/* Interface is already up. */
-	if (if_is_operative(ifp)) {
-		/* Temporarily keep ifp values. */
-		struct interface if_tmp;
-		memcpy(&if_tmp, ifp, sizeof(struct interface));
+	ospf_if_recalculate_output_cost(ifp);
 
+	if (oii && oii->curr_mtu != ifp->mtu) {
 		if (IS_DEBUG_OSPF(zebra, ZEBRA_INTERFACE))
 			zlog_debug(
-				"Zebra: Interface[%s] state update speed %u -> %u, bw  %d -> %d",
-				ifp->name, if_tmp.speed, ifp->speed,
-				if_tmp.bandwidth, ifp->bandwidth);
+				"Zebra: Interface[%s] MTU change %u -> %u.",
+				ifp->name, oii->curr_mtu, ifp->mtu);
 
-		ospf_if_recalculate_output_cost(ifp);
+		oii->curr_mtu = ifp->mtu;
+		/* Must reset the interface (simulate down/up) when MTU
+		 * changes. */
+		ospf_if_reset(ifp);
 
-		if (if_tmp.mtu != ifp->mtu) {
-			if (IS_DEBUG_OSPF(zebra, ZEBRA_INTERFACE))
-				zlog_debug(
-					"Zebra: Interface[%s] MTU change %u -> %u.",
-					ifp->name, if_tmp.mtu, ifp->mtu);
-
-			/* Must reset the interface (simulate down/up) when MTU
-			 * changes. */
-			ospf_if_reset(ifp);
-		}
 		return 0;
 	}
 

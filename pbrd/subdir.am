@@ -10,7 +10,7 @@ vtysh_scan += \
 	$(top_srcdir)/pbrd/pbr_vty.c \
 	$(top_srcdir)/pbrd/pbr_debug.c \
 	# end
-man8 += $(MANBUILD)/pbrd.8
+man8 += $(MANBUILD)/frr-pbrd.8
 endif
 
 pbrd_libpbr_a_SOURCES = \
@@ -20,6 +20,7 @@ pbrd_libpbr_a_SOURCES = \
 	pbrd/pbr_memory.c \
 	pbrd/pbr_nht.c \
 	pbrd/pbr_debug.c \
+	pbrd/pbr_vrf.c \
 	# end
 
 noinst_HEADERS += \
@@ -29,6 +30,7 @@ noinst_HEADERS += \
 	pbrd/pbr_vty.h \
 	pbrd/pbr_zebra.h \
 	pbrd/pbr_debug.h \
+	pbrd/pbr_vrf.h \
 	# end
 
 pbrd/pbr_vty_clippy.c: $(CLIPPY_DEPS)

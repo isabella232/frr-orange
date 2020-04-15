@@ -303,6 +303,8 @@ static void prefix_list_delete(struct prefix_list *plist)
 
 	/* If prefix-list contain prefix_list_entry free all of it. */
 	for (pentry = plist->head; pentry; pentry = next) {
+		route_map_notify_pentry_dependencies(plist->name, pentry,
+						     RMAP_EVENT_PLIST_DELETED);
 		next = pentry->next;
 		prefix_list_trie_del(plist, pentry);
 		prefix_list_entry_free(pentry);
@@ -385,7 +387,7 @@ static int64_t prefix_new_seq_get(struct prefix_list *plist)
 	int64_t newseq;
 	struct prefix_list_entry *pentry;
 
-	maxseq = newseq = 0;
+	maxseq = 0;
 
 	for (pentry = plist->head; pentry; pentry = pentry->next) {
 		if (maxseq < pentry->seq)
@@ -496,7 +498,6 @@ static void prefix_list_trie_del(struct prefix_list *plist,
 	for (; depth > 0; depth--)
 		if (trie_table_empty(*tables[depth])) {
 			XFREE(MTYPE_PREFIX_LIST_TRIE, *tables[depth]);
-			*tables[depth] = NULL;
 		}
 }
 
@@ -519,6 +520,8 @@ static void prefix_list_entry_delete(struct prefix_list *plist,
 	else
 		plist->tail = pentry->prev;
 
+	route_map_notify_pentry_dependencies(plist->name, pentry,
+					     RMAP_EVENT_PLIST_DELETED);
 	prefix_list_entry_free(pentry);
 
 	plist->count--;
@@ -631,6 +634,9 @@ static void prefix_list_entry_add(struct prefix_list *plist,
 
 	/* Increment count. */
 	plist->count++;
+
+	route_map_notify_pentry_dependencies(plist->name, pentry,
+					     RMAP_EVENT_PLIST_ADDED);
 
 	/* Run hook function. */
 	if (plist->master->add_hook)
@@ -772,7 +778,7 @@ static void __attribute__((unused)) prefix_list_print(struct prefix_list *plist)
 
 			p = &pentry->prefix;
 
-			printf("  seq %" PRId64 " %s %s/%d", pentry->seq,
+			printf("  seq %lld %s %s/%d", (long long)pentry->seq,
 			       prefix_list_type_str(pentry),
 			       inet_ntop(p->family, p->u.val, buf, BUFSIZ),
 			       p->prefixlen);
@@ -920,7 +926,6 @@ static int vty_prefix_list_install(struct vty *vty, afi_t afi, const char *name,
 	default:
 		vty_out(vty, "%% Unrecognized AFI (%d)\n", afi);
 		return CMD_WARNING_CONFIG_FAILED;
-		break;
 	}
 
 	/* If prefix has bits not under the mask, adjust it to fit */
@@ -1093,10 +1098,7 @@ static int vty_prefix_list_desc_unset(struct vty *vty, afi_t afi,
 		return CMD_WARNING_CONFIG_FAILED;
 	}
 
-	if (plist->desc) {
-		XFREE(MTYPE_TMP, plist->desc);
-		plist->desc = NULL;
-	}
+	XFREE(MTYPE_TMP, plist->desc);
 
 	if (plist->head == NULL && plist->tail == NULL && plist->desc == NULL)
 		prefix_list_delete(plist);
@@ -1891,6 +1893,8 @@ int prefix_bgp_orf_set(char *name, afi_t afi, struct orf_prefix *orfp,
 	if (!plist)
 		return CMD_WARNING_CONFIG_FAILED;
 
+	apply_mask(&orfp->p);
+
 	if (set) {
 		pentry = prefix_list_entry_make(
 			&orfp->p, (permit ? PREFIX_PERMIT : PREFIX_DENY),
@@ -2035,7 +2039,7 @@ static void prefix_list_reset_afi(afi_t afi, int orf)
 	assert(master->str.head == NULL);
 	assert(master->str.tail == NULL);
 
-	master->seqnum = 1;
+	master->seqnum = true;
 	master->recent = NULL;
 }
 

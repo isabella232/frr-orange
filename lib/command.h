@@ -78,7 +78,7 @@ struct host {
 	int encrypt;
 
 	/* Banner configuration. */
-	const char *motd;
+	char *motd;
 	char *motdfile;
 };
 
@@ -165,7 +165,7 @@ enum node_type {
 
 extern vector cmdvec;
 extern const struct message tokennames[];
-extern const char *node_names[];
+extern const char *const node_names[];
 
 /* Node which has some commands and prompt string and configuration
    function pointer . */
@@ -217,7 +217,7 @@ struct cmd_node {
 
 /* helper defines for end-user DEFUN* macros */
 #define DEFUN_CMD_ELEMENT(funcname, cmdname, cmdstr, helpstr, attrs, dnum)     \
-	static struct cmd_element cmdname = {                                  \
+	static const struct cmd_element cmdname = {                            \
 		.string = cmdstr,                                              \
 		.func = funcname,                                              \
 		.doc = helpstr,                                                \
@@ -414,18 +414,33 @@ struct cmd_node {
 
 /* Daemons lists */
 #define DAEMONS_STR                                                            \
-	"For the zebra daemon\nFor the rip daemon\nFor the ripng daemon\nFor the ospf daemon\nFor the ospfv6 daemon\nFor the bgp daemon\nFor the isis daemon\nFor the pbr daemon\nFor the fabricd daemon\nFor the pim daemon\nFor the static daemon\nFor the sharpd daemon\nFor the vrrpd daemon\n"
+	"For the zebra daemon\nFor the rip daemon\nFor the ripng daemon\nFor the ospf daemon\nFor the ospfv6 daemon\nFor the bgp daemon\nFor the isis daemon\nFor the pbr daemon\nFor the fabricd daemon\nFor the pim daemon\nFor the static daemon\nFor the sharpd daemon\nFor the vrrpd daemon\nFor the ldpd daemon\n"
 #define DAEMONS_LIST                                                           \
-	"<zebra|ripd|ripngd|ospfd|ospf6d|bgpd|isisd|pbrd|fabricd|pimd|staticd|sharpd|vrrpd>"
+	"<zebra|ripd|ripngd|ospfd|ospf6d|bgpd|isisd|pbrd|fabricd|pimd|staticd|sharpd|vrrpd|ldpd>"
+
+/* Graceful Restart cli help strings */
+#define GR_CMD "Global Graceful Restart command\n"
+#define NO_GR_CMD "Undo Global Graceful Restart command\n"
+#define GR "Global Graceful Restart - GR Mode\n"
+#define GR_DISABLE "Global Graceful Restart - Disable Mode\n"
+#define NO_GR_DISABLE "Undo Global Graceful Restart - Disable Mode\n"
+#define GR_DEBUG "Graceful Restart - Enable Debug Logs\n"
+#define GR_SHOW "Graceful Restart - Show command for Global and all neighbor mode\n"
+#define GR_NEIGHBOR_CMD "Graceful Restart command for a neighbor\n"
+#define NO_GR_NEIGHBOR_CMD "Undo Graceful Restart command for a neighbor\n"
+#define GR_NEIGHBOR_DISABLE_CMD "Graceful Restart Disable command for a neighbor\n"
+#define NO_GR_NEIGHBOR_DISABLE_CMD "Undo Graceful Restart Disable command for a neighbor\n"
+#define GR_NEIGHBOR_HELPER_CMD "Graceful Restart Helper command for a neighbor\n"
+#define NO_GR_NEIGHBOR_HELPER_CMD "Undo Graceful Restart Helper command for a neighbor\n"
 
 /* Prototypes. */
-extern void install_node(struct cmd_node *, int (*)(struct vty *));
+extern void install_node(struct cmd_node *node, int (*)(struct vty *));
 extern void install_default(enum node_type);
-extern void install_element(enum node_type, struct cmd_element *);
+extern void install_element(enum node_type, const struct cmd_element *);
 
 /* known issue with uninstall_element:  changes to cmd_token->attr (i.e.
  * deprecated/hidden) are not reversed. */
-extern void uninstall_element(enum node_type, struct cmd_element *);
+extern void uninstall_element(enum node_type, const struct cmd_element *);
 
 /* Concatenates argv[shift] through argv[argc-1] into a single NUL-terminated
    string with a space between each element (allocated using
@@ -499,6 +514,7 @@ extern void host_config_set(const char *);
 extern void print_version(const char *);
 
 extern int cmd_banner_motd_file(const char *);
+extern void cmd_banner_motd_line(const char *line);
 
 /* struct host global, ick */
 extern struct host host;

@@ -64,9 +64,8 @@ static int igmp_sock_open(struct in_addr ifaddr, struct interface *ifp,
 		} else {
 			zlog_warn(
 				"%s %s: IGMP socket fd=%d interface %s: could not solve %s to group address: errno=%d: %s",
-				__FILE__, __PRETTY_FUNCTION__, fd,
-				inet_ntoa(ifaddr), PIM_ALL_ROUTERS, errno,
-				safe_strerror(errno));
+				__FILE__, __func__, fd, inet_ntoa(ifaddr),
+				PIM_ALL_ROUTERS, errno, safe_strerror(errno));
 		}
 	}
 
@@ -81,7 +80,7 @@ static int igmp_sock_open(struct in_addr ifaddr, struct interface *ifp,
 	} else {
 		zlog_warn(
 			"%s %s: IGMP socket fd=%d interface %s: could not solve %s to group address: errno=%d: %s",
-			__FILE__, __PRETTY_FUNCTION__, fd, inet_ntoa(ifaddr),
+			__FILE__, __func__, fd, inet_ntoa(ifaddr),
 			PIM_ALL_SYSTEMS, errno, safe_strerror(errno));
 	}
 
@@ -92,7 +91,7 @@ static int igmp_sock_open(struct in_addr ifaddr, struct interface *ifp,
 	} else {
 		zlog_warn(
 			"%s %s: IGMP socket fd=%d interface %s: could not solve %s to group address: errno=%d: %s",
-			__FILE__, __PRETTY_FUNCTION__, fd, inet_ntoa(ifaddr),
+			__FILE__, __func__, fd, inet_ntoa(ifaddr),
 			PIM_ALL_IGMP_ROUTERS, errno, safe_strerror(errno));
 	}
 
@@ -119,8 +118,8 @@ static void igmp_sock_dump(array_t *igmp_sock_array)
 		struct igmp_sock *igmp = array_get(igmp_sock_array, i);
 
 		zlog_debug("%s %s: [%d/%d] igmp_addr=%s fd=%d", __FILE__,
-			   __PRETTY_FUNCTION__, i, size,
-			   inet_ntoa(igmp->ifaddr), igmp->fd);
+			   __func__, i, size, inet_ntoa(igmp->ifaddr),
+			   igmp->fd);
 	}
 }
 #endif
@@ -166,8 +165,7 @@ static int pim_igmp_other_querier_expire(struct thread *t)
 		char ifaddr_str[INET_ADDRSTRLEN];
 		pim_inet4_dump("<ifaddr?>", igmp->ifaddr, ifaddr_str,
 			       sizeof(ifaddr_str));
-		zlog_debug("%s: Querier %s resuming", __PRETTY_FUNCTION__,
-			   ifaddr_str);
+		zlog_debug("%s: Querier %s resuming", __func__, ifaddr_str);
 	}
 
 	/*
@@ -312,6 +310,13 @@ static int igmp_recv_query(struct igmp_sock *igmp, int query_version,
 		return 0;
 	}
 
+	if (if_lookup_address(&from, AF_INET, ifp->vrf_id)) {
+		if (PIM_DEBUG_IGMP_PACKETS)
+			zlog_debug("Recv IGMP query on interface: %s from ourself %s",
+				   ifp->name, from_str);
+		return 0;
+	}
+
 	/* Collecting IGMP Rx stats */
 	switch (query_version) {
 	case 1:
@@ -412,7 +417,7 @@ static int igmp_v1_recv_report(struct igmp_sock *igmp, struct in_addr from,
 	struct igmp_group *group;
 	struct in_addr group_addr;
 
-	on_trace(__PRETTY_FUNCTION__, igmp->interface, from);
+	on_trace(__func__, igmp->interface, from);
 
 	if (igmp->mtrace_only)
 		return 0;
@@ -428,8 +433,7 @@ static int igmp_v1_recv_report(struct igmp_sock *igmp, struct in_addr from,
 	igmp->rx_stats.report_v1++;
 
 	if (PIM_DEBUG_IGMP_TRACE) {
-		zlog_warn("%s %s: FIXME WRITEME", __FILE__,
-			  __PRETTY_FUNCTION__);
+		zlog_warn("%s %s: FIXME WRITEME", __FILE__, __func__);
 	}
 
 	memcpy(&group_addr, igmp_msg + 4, sizeof(struct in_addr));
@@ -471,28 +475,29 @@ int pim_igmp_packet(struct igmp_sock *igmp, char *buf, size_t len)
 
 	ip_hlen = ip_hdr->ip_hl << 2; /* ip_hl gives length in 4-byte words */
 
-	if (PIM_DEBUG_IGMP_PACKETS) {
-		zlog_debug(
-			"Recv IP packet from %s to %s on %s: size=%zu ip_header_size=%zu ip_proto=%d",
-			from_str, to_str, igmp->interface->name, len, ip_hlen,
-			ip_hdr->ip_p);
+	if (ip_hlen > len) {
+		zlog_warn(
+			"IGMP packet header claims size %zu, but we only have %zu bytes",
+			ip_hlen, len);
+		return -1;
 	}
 
 	igmp_msg = buf + ip_hlen;
-	msg_type = *igmp_msg;
 	igmp_msg_len = len - ip_hlen;
-
-	if (PIM_DEBUG_IGMP_PACKETS) {
-		zlog_debug(
-			"Recv IGMP packet from %s to %s on %s: ttl=%d msg_type=%d msg_size=%d",
-			from_str, to_str, igmp->interface->name, ip_hdr->ip_ttl,
-			msg_type, igmp_msg_len);
-	}
 
 	if (igmp_msg_len < PIM_IGMP_MIN_LEN) {
 		zlog_warn("IGMP message size=%d shorter than minimum=%d",
 			  igmp_msg_len, PIM_IGMP_MIN_LEN);
 		return -1;
+	}
+
+	msg_type = *igmp_msg;
+
+	if (PIM_DEBUG_IGMP_PACKETS) {
+		zlog_debug(
+			"Recv IGMP packet from %s to %s on %s: size=%zu ttl=%d msg_type=%d msg_size=%d",
+			from_str, to_str, igmp->interface->name, len, ip_hdr->ip_ttl,
+			msg_type, igmp_msg_len);
 	}
 
 	switch (msg_type) {
@@ -1006,9 +1011,8 @@ static int igmp_group_timer(struct thread *t)
 		char group_str[INET_ADDRSTRLEN];
 		pim_inet4_dump("<group?>", group->group_addr, group_str,
 			       sizeof(group_str));
-		zlog_debug("%s: Timer for group %s on interface %s",
-			   __PRETTY_FUNCTION__, group_str,
-			   group->group_igmp_sock->interface->name);
+		zlog_debug("%s: Timer for group %s on interface %s", __func__,
+			   group_str, group->group_igmp_sock->interface->name);
 	}
 
 	zassert(group->group_filtermode_isexcl);
@@ -1100,13 +1104,15 @@ struct igmp_group *igmp_add_group_by_addr(struct igmp_sock *igmp,
 
 	if (!pim_is_group_224_4(group_addr)) {
 		zlog_warn("%s: Group Specified is not part of 224.0.0.0/4",
-			  __PRETTY_FUNCTION__);
+			  __func__);
 		return NULL;
 	}
 
 	if (pim_is_group_224_0_0_0_24(group_addr)) {
-		zlog_warn("%s: Group specified is part of 224.0.0.0/24",
-			  __PRETTY_FUNCTION__);
+		if (PIM_DEBUG_IGMP_TRACE)
+			zlog_debug(
+				"%s: Group specified %s is part of 224.0.0.0/24",
+				__func__, inet_ntoa(group_addr));
 		return NULL;
 	}
 	/*

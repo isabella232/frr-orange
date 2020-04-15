@@ -4,7 +4,7 @@
  * Copyright (C) 2017 by Bingen Eguzkitza,
  *                       Volta Networks Inc.
  *
- * This file is part of FreeRangeRouting (FRR)
+ * This file is part of FRRouting (FRR)
  *
  * FRR is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -262,8 +262,12 @@ assign_specific_label_chunk(uint8_t proto, unsigned short instance,
 		 * included in the previous one */
 		for (node = first_node; node && (node != last_node);
 		     node = next) {
+			struct label_manager_chunk *death;
+
 			next = listnextnode(node);
+			death = listgetdata(node);
 			list_delete_node(lbl_mgr.lc_list, node);
+			delete_label_chunk(death);
 		}
 
 		lmc = create_label_chunk(proto, instance, keep, base, end);
@@ -442,6 +446,15 @@ int lm_client_connect_response(uint8_t proto, uint16_t instance,
 int lm_get_chunk_response(struct label_manager_chunk *lmc, uint8_t proto,
 			  uint16_t instance, vrf_id_t vrf_id)
 {
+	if (!lmc)
+		flog_err(EC_ZEBRA_LM_CANNOT_ASSIGN_CHUNK,
+			 "Unable to assign Label Chunk to %s instance %u",
+			 zebra_route_string(proto), instance);
+	else if (IS_ZEBRA_DEBUG_PACKET)
+		zlog_debug("Assigned Label Chunk %u - %u to %s instance %u",
+			   lmc->start, lmc->end, zebra_route_string(proto),
+			   instance);
+
 	struct zserv *client = zserv_find_client(proto, instance);
 	if (!client) {
 		zlog_err("%s: could not find client for daemon %s instance %u",

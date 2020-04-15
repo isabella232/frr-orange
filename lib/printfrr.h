@@ -30,8 +30,7 @@ struct fbuf {
 	size_t len;
 };
 
-#define at(a, b) \
-	__attribute__((format(printf, a, b)))
+#define at(a, b) PRINTFRR(a, b)
 #define atn(a, b) \
 	at(a, b) __attribute__((nonnull(1) _RET_NONNULL))
 #define atm(a, b) \
@@ -73,8 +72,19 @@ char *vasnprintfrr(struct memtype *mt, char *out, size_t sz,
 char  *asnprintfrr(struct memtype *mt, char *out, size_t sz,
 		   const char *fmt, ...)     atn(4, 5);
 
+#define printfrr(fmt, ...)                                                     \
+	do {                                                                   \
+		char buf[256], *out;                                           \
+		out = asnprintfrr(MTYPE_TMP, buf, sizeof(buf), fmt,            \
+				  ##__VA_ARGS__);                              \
+		fputs(out, stdout);                                            \
+		if (out != buf)                                                \
+			XFREE(MTYPE_TMP, out);                                 \
+	} while (0)
+
 #undef at
 #undef atm
+#undef atn
 
 /* extension specs must start with a capital letter (this is a restriction
  * for both performance's and human understanding's sake.)
@@ -124,7 +134,7 @@ void printfrr_ext_reg(const struct printfrr_ext *);
 #define printfrr_ext_autoreg_p(matchs, print_fn)                               \
 	static ssize_t print_fn(char *, size_t, const char *, int,             \
 				const void *);                                 \
-	static struct printfrr_ext _printext_##print_fn = {                    \
+	static const struct printfrr_ext _printext_##print_fn = {              \
 		.match = matchs,                                               \
 		.print_ptr = print_fn,                                         \
 	};                                                                     \
@@ -136,7 +146,7 @@ void printfrr_ext_reg(const struct printfrr_ext *);
 
 #define printfrr_ext_autoreg_i(matchs, print_fn)                               \
 	static ssize_t print_fn(char *, size_t, const char *, int, uintmax_t); \
-	static struct printfrr_ext _printext_##print_fn = {                    \
+	static const struct printfrr_ext _printext_##print_fn = {              \
 		.match = matchs,                                               \
 		.print_int = print_fn,                                         \
 	};                                                                     \

@@ -75,11 +75,11 @@ void router_id_get(struct prefix *p, vrf_id_t vrf_id)
 	struct connected *c;
 	struct zebra_vrf *zvrf = vrf_info_get(vrf_id);
 
-	p->u.prefix4.s_addr = 0;
+	p->u.prefix4.s_addr = INADDR_ANY;
 	p->family = AF_INET;
 	p->prefixlen = 32;
 
-	if (zvrf->rid_user_assigned.u.prefix4.s_addr)
+	if (zvrf->rid_user_assigned.u.prefix4.s_addr != INADDR_ANY)
 		p->u.prefix4.s_addr = zvrf->rid_user_assigned.u.prefix4.s_addr;
 	else if (!list_isempty(zvrf->rid_lo_sorted_list)) {
 		node = listtail(zvrf->rid_lo_sorted_list);
@@ -185,7 +185,8 @@ void router_id_write(struct vty *vty)
 
 	RB_FOREACH (vrf, vrf_name_head, &vrfs_by_name)
 		if ((zvrf = vrf->info) != NULL)
-			if (zvrf->rid_user_assigned.u.prefix4.s_addr) {
+			if (zvrf->rid_user_assigned.u.prefix4.s_addr
+			    != INADDR_ANY) {
 				if (zvrf_id(zvrf) == VRF_DEFAULT)
 					vty_out(vty, "router-id %s\n",
 						inet_ntoa(
@@ -253,6 +254,36 @@ DEFUN (no_router_id,
 	return CMD_SUCCESS;
 }
 
+DEFUN (show_router_id,
+       show_router_id_cmd,
+       "show router-id [vrf NAME]",
+       SHOW_STR
+       "Show the configured router-id\n"
+       VRF_CMD_HELP_STR)
+{
+        int idx_name = 3;
+
+        vrf_id_t vrf_id = VRF_DEFAULT;
+        struct zebra_vrf *zvrf;
+
+        if (argc > 2)
+                VRF_GET_ID(vrf_id, argv[idx_name]->arg, false);
+
+        zvrf = vrf_info_get(vrf_id);
+
+        if ((zvrf != NULL) && (zvrf->rid_user_assigned.u.prefix4.s_addr)) {
+                vty_out(vty, "zebra:\n");
+                if (vrf_id == VRF_DEFAULT)
+                        vty_out(vty, "     router-id %s vrf default\n",
+                                inet_ntoa(zvrf->rid_user_assigned.u.prefix4));
+                else
+                        vty_out(vty, "     router-id %s vrf %s\n",
+                                inet_ntoa(zvrf->rid_user_assigned.u.prefix4),
+                                argv[idx_name]->arg);
+        }
+
+        return CMD_SUCCESS;
+}
 
 static int router_id_cmp(void *a, void *b)
 {
@@ -267,6 +298,7 @@ void router_id_cmd_init(void)
 {
 	install_element(CONFIG_NODE, &router_id_cmd);
 	install_element(CONFIG_NODE, &no_router_id_cmd);
+	install_element(VIEW_NODE, &show_router_id_cmd);
 }
 
 void router_id_init(struct zebra_vrf *zvrf)

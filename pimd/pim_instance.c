@@ -34,6 +34,7 @@
 #include "pim_ssmpingd.h"
 #include "pim_vty.h"
 #include "pim_bsm.h"
+#include "pim_mlag.h"
 
 static void pim_instance_terminate(struct pim_instance *pim)
 {
@@ -46,6 +47,8 @@ static void pim_instance_terminate(struct pim_instance *pim)
 
 	if (pim->static_routes)
 		list_delete(&pim->static_routes);
+
+	pim_instance_mlag_terminate(pim);
 
 	pim_upstream_terminate(pim);
 
@@ -66,6 +69,8 @@ static void pim_instance_terminate(struct pim_instance *pim)
 
 	pim_msdp_exit(pim);
 
+	XFREE(MTYPE_PIM_PLIST_NAME, pim->spt.plist);
+	XFREE(MTYPE_PIM_PLIST_NAME, pim->register_plist);
 	XFREE(MTYPE_PIM_PIM_INSTANCE, pim);
 }
 
@@ -78,6 +83,7 @@ static struct pim_instance *pim_instance_init(struct vrf *vrf)
 
 	pim_if_init(pim);
 
+	pim->mcast_if_count = 0;
 	pim->keep_alive_time = PIM_KEEPALIVE_PERIOD;
 	pim->rp_keep_alive_time = PIM_RP_KEEPALIVE_PERIOD;
 
@@ -98,7 +104,7 @@ static struct pim_instance *pim_instance_init(struct vrf *vrf)
 					 hash_name);
 
 	if (PIM_DEBUG_ZEBRA)
-		zlog_debug("%s: NHT rpf hash init ", __PRETTY_FUNCTION__);
+		zlog_debug("%s: NHT rpf hash init ", __func__);
 
 	pim->ssm_info = pim_ssm_init();
 
@@ -114,6 +120,8 @@ static struct pim_instance *pim_instance_init(struct vrf *vrf)
 	pim_oil_init(pim);
 
 	pim_upstream_init(pim);
+
+	pim_instance_mlag_init(pim);
 
 	pim->last_route_change_time = -1;
 	return pim;
@@ -160,7 +168,7 @@ static int pim_vrf_enable(struct vrf *vrf)
 {
 	struct pim_instance *pim = (struct pim_instance *)vrf->info;
 
-	zlog_debug("%s: for %s", __PRETTY_FUNCTION__, vrf->name);
+	zlog_debug("%s: for %s", __func__, vrf->name);
 
 	pim_mroute_socket_enable(pim);
 

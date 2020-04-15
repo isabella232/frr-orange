@@ -23,7 +23,12 @@
 
 #include <lib/version.h>
 #include <sys/types.h>
+#include <sys/types.h>
+#ifdef HAVE_LIBPCREPOSIX
+#include <pcreposix.h>
+#else
 #include <regex.h>
+#endif /* HAVE_LIBPCREPOSIX */
 #include <stdio.h>
 
 #include "linklist.h"
@@ -89,7 +94,7 @@ static char *vty_ipv6_accesslist_name = NULL;
 static vector Vvty_serv_thread;
 
 /* Current directory. */
-char vty_cwd[MAXPATHLEN];
+static char vty_cwd[MAXPATHLEN];
 
 /* Login password check. */
 static int no_password_check = 0;
@@ -226,8 +231,13 @@ int vty_out(struct vty *vty, const char *format, ...)
 				strlen(filtered));
 		break;
 	case VTY_SHELL:
-		fprintf(vty->of, "%s", filtered);
-		fflush(vty->of);
+		if (vty->of) {
+			fprintf(vty->of, "%s", filtered);
+			fflush(vty->of);
+		} else if (vty->of_saved) {
+			fprintf(vty->of_saved, "%s", filtered);
+			fflush(vty->of_saved);
+		}
 		break;
 	case VTY_SHELL_SERV:
 	case VTY_FILE:
@@ -1221,7 +1231,6 @@ static int vty_telnet_option(struct vty *vty, unsigned char *buf, int nbytes)
 		vty->sb_len = 0;
 		vty->iac_sb_in_progress = 1;
 		return 0;
-		break;
 	case SE: {
 		if (!vty->iac_sb_in_progress)
 			return 0;
@@ -1261,7 +1270,6 @@ static int vty_telnet_option(struct vty *vty, unsigned char *buf, int nbytes)
 		}
 		vty->iac_sb_in_progress = 0;
 		return 0;
-		break;
 	}
 	default:
 		break;
@@ -2060,7 +2068,6 @@ static int vtysh_flush(struct vty *vty)
 		buffer_reset(vty->obuf);
 		vty_close(vty);
 		return -1;
-		break;
 	case BUFFER_EMPTY:
 		break;
 	}
@@ -3011,15 +3018,8 @@ void vty_reset(void)
 
 	vty_timeout_val = VTY_TIMEOUT_DEFAULT;
 
-	if (vty_accesslist_name) {
-		XFREE(MTYPE_VTY, vty_accesslist_name);
-		vty_accesslist_name = NULL;
-	}
-
-	if (vty_ipv6_accesslist_name) {
-		XFREE(MTYPE_VTY, vty_ipv6_accesslist_name);
-		vty_ipv6_accesslist_name = NULL;
-	}
+	XFREE(MTYPE_VTY, vty_accesslist_name);
+	XFREE(MTYPE_VTY, vty_ipv6_accesslist_name);
 }
 
 static void vty_save_cwd(void)

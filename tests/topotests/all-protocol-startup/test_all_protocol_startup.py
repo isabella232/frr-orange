@@ -120,6 +120,7 @@ def setup_module(module):
         if net['r%s' % i].daemon_available('ldpd'):
             # Only test LDPd if it's installed and Kernel >= 4.5
             net['r%s' % i].loadConf('ldpd', '%s/r%s/ldpd.conf' % (thisDir, i))
+        net['r%s' % i].loadConf('sharpd')
         net['r%s' % i].startRouter()
 
     # For debugging after starting Quagga/FRR daemons, uncomment the next line
@@ -306,7 +307,7 @@ def test_converge_protocols():
         expected = open(v4_routesFile).read().rstrip()
         expected = ('\n'.join(expected.splitlines()) + '\n').splitlines(1)
 
-        actual = net['r%s' %i].cmd('vtysh -c "show ip route" | /usr/bin/tail -n +7 | sort 2> /dev/null').rstrip()
+        actual = net['r%s' %i].cmd('vtysh -c "show ip route" | /usr/bin/tail -n +7 | env LC_ALL=en_US.UTF-8 sort 2> /dev/null').rstrip()
         # Drop time in last update
         actual = re.sub(r" [0-2][0-9]:[0-5][0-9]:[0-5][0-9]", " XX:XX:XX", actual)
         actual = ('\n'.join(actual.splitlines()) + '\n').splitlines(1)
@@ -328,7 +329,7 @@ def test_converge_protocols():
         expected = open(v6_routesFile).read().rstrip()
         expected = ('\n'.join(expected.splitlines()) + '\n').splitlines(1)
 
-        actual = net['r%s' %i].cmd('vtysh -c "show ipv6 route" | /usr/bin/tail -n +7 | sort 2> /dev/null').rstrip()
+        actual = net['r%s' %i].cmd('vtysh -c "show ipv6 route" | /usr/bin/tail -n +7 | env LC_ALL=en_US.UTF-8 sort 2> /dev/null').rstrip()
         # Drop time in last update
         actual = re.sub(r" [0-2][0-9]:[0-5][0-9]:[0-5][0-9]", " XX:XX:XX", actual)
         actual = ('\n'.join(actual.splitlines()) + '\n').splitlines(1)
@@ -346,6 +347,36 @@ def test_converge_protocols():
     # For debugging after starting FRR/Quagga daemons, uncomment the next line
     ## CLI(net)
 
+def test_nexthop_groups():
+    global fatal_error
+    global net
+
+    # Skip if previous fatal error condition is raised
+    if (fatal_error != ""):
+        pytest.skip(fatal_error)
+
+    print("\n\n** Verifying Nexthop Groups")
+    print("******************************************\n")
+
+    # Create a lib nexthop-group
+    net["r1"].cmd('vtysh -c "c t" -c "nexthop-group red" -c "nexthop 1.1.1.1" -c "nexthop 1.1.1.2"')
+
+    # Create with sharpd using nexthop-group
+    net["r1"].cmd('vtysh -c "sharp install routes 2.2.2.1 nexthop-group red 1"')
+
+    # Verify route and that zebra created NHGs for and they are valid/installed
+    output = net["r1"].cmd('vtysh -c "show ip route 2.2.2.1/32 nexthop-group"')
+    match = re.search(r"Nexthop Group ID: (\d+)", output);
+    assert match is not None, "Nexthop Group ID not found for sharpd route 2.2.2.1/32"
+
+    nhe_id = int(match.group(1))
+
+    output = net["r1"].cmd('vtysh -c "show nexthop-group rib %d"' % nhe_id)
+    match = re.search(r"Valid", output)
+    assert match is not None, "Nexthop Group ID=%d not marked Valid" % nhe_id
+
+    match = re.search(r"Installed", output)
+    assert match is not None, "Nexthop Group ID=%d not marked Installed" % nhe_id
 
 def test_rip_status():
     global fatal_error

@@ -57,13 +57,10 @@ static inline const char *addr_to_a(uint8_t af, void *addr)
 
 	case AF_INET:
 		return inet_ntoa(*((struct in_addr *)addr));
-		break;
 	case AF_INET6:
 		return inet6_ntoa(*((struct in6_addr *)addr));
-		break;
 	default:
 		return "<Addr in unknown AF>";
-		break;
 	}
 }
 
@@ -92,10 +89,8 @@ static size_t af_addr_size(uint8_t af)
 
 	case AF_INET:
 		return 4;
-		break;
 	case AF_INET6:
 		return 16;
-		break;
 	default:
 		assert(0);
 		return 16;
@@ -218,7 +213,7 @@ static int netlink_route_info_add_nh(netlink_route_info_t *ri,
 	if (nexthop->type == NEXTHOP_TYPE_IPV4
 	    || nexthop->type == NEXTHOP_TYPE_IPV4_IFINDEX) {
 		nhi.gateway = &nexthop->gate;
-		if (nexthop->src.ipv4.s_addr)
+		if (nexthop->src.ipv4.s_addr != INADDR_ANY)
 			src = &nexthop->src;
 	}
 
@@ -228,7 +223,7 @@ static int netlink_route_info_add_nh(netlink_route_info_t *ri,
 	}
 
 	if (nexthop->type == NEXTHOP_TYPE_IFINDEX) {
-		if (nexthop->src.ipv4.s_addr)
+		if (nexthop->src.ipv4.s_addr != INADDR_ANY)
 			src = &nexthop->src;
 	}
 
@@ -305,8 +300,7 @@ static int netlink_route_info_fill(netlink_route_info_t *ri, int cmd,
 		return 1;
 
 	if (!re) {
-		zfpm_debug("%s: Expected non-NULL re pointer",
-			   __PRETTY_FUNCTION__);
+		zfpm_debug("%s: Expected non-NULL re pointer", __func__);
 		return 0;
 	}
 
@@ -314,7 +308,7 @@ static int netlink_route_info_fill(netlink_route_info_t *ri, int cmd,
 	ri->rtm_type = RTN_UNICAST;
 	ri->metric = &re->metric;
 
-	for (ALL_NEXTHOPS(re->ng, nexthop)) {
+	for (ALL_NEXTHOPS(re->nhe->nhg, nexthop)) {
 		if (ri->num_nhs >= zrouter.multipath_num)
 			break;
 
@@ -575,7 +569,7 @@ int zfpm_netlink_encode_route(int cmd, rib_dest_t *dest, struct route_entry *re,
 	if (!netlink_route_info_fill(ri, cmd, dest, re))
 		return 0;
 
-	zfpm_log_route_info(ri, __FUNCTION__);
+	zfpm_log_route_info(ri, __func__);
 
 	return netlink_route_info_encode(ri, in_buf, in_buf_len);
 }

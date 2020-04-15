@@ -58,6 +58,7 @@
 #include "isisd/fabricd.h"
 #include "isisd/isis_tx_queue.h"
 #include "isisd/isis_pdu_counter.h"
+#include "isisd/isis_nb.h"
 
 static int ack_lsp(struct isis_lsp_hdr *hdr, struct isis_circuit *circuit,
 		   int level)
@@ -1053,6 +1054,8 @@ dontcheckadj:
 						   circuit->rcv_stream,
 						   circuit->area, level,
 						   lsp_confusion);
+					if (lsp_confusion)
+						isis_free_tlvs(tlvs);
 					tlvs = NULL;
 					/* ii */
 					lsp_flood_or_update(lsp, NULL,
@@ -1649,7 +1652,7 @@ int isis_handle_pdu(struct isis_circuit *circuit, uint8_t *ssnpa)
 
 	if (length != expected_length) {
 		flog_err(EC_ISIS_PACKET,
-			 "Exepected fixed header length = %" PRIu8
+			 "Expected fixed header length = %" PRIu8
 			 " but got %" PRIu8,
 			 expected_length, length);
 		return ISIS_ERROR;

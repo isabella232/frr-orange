@@ -9,7 +9,7 @@ bin_PROGRAMS += pimd/mtracebis
 noinst_PROGRAMS += pimd/test_igmpv3_join
 dist_examples_DATA += pimd/pimd.conf.sample
 vtysh_scan += $(top_srcdir)/pimd/pim_cmd.c
-man8 += $(MANBUILD)/pimd.8
+man8 += $(MANBUILD)/frr-pimd.8
 man8 += $(MANBUILD)/mtracebis.8
 endif
 
@@ -34,6 +34,7 @@ pimd_libpim_a_SOURCES = \
 	pimd/pim_jp_agg.c \
 	pimd/pim_macro.c \
 	pimd/pim_memory.c \
+	pimd/pim_mlag.c \
 	pimd/pim_mroute.c \
 	pimd/pim_msdp.c \
 	pimd/pim_msdp_packet.c \
@@ -62,6 +63,7 @@ pimd_libpim_a_SOURCES = \
 	pimd/pim_zebra.c \
 	pimd/pim_zlookup.c \
 	pimd/pim_vxlan.c \
+	pimd/pim_zpthread.c \
 	pimd/pimd.c \
 	# end
 
@@ -87,6 +89,7 @@ noinst_HEADERS += \
 	pimd/pim_jp_agg.h \
 	pimd/pim_macro.h \
 	pimd/pim_memory.h \
+	pimd/pim_mlag.h \
 	pimd/pim_mroute.h \
 	pimd/pim_msdp.h \
 	pimd/pim_msdp_packet.h \

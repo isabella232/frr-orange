@@ -102,7 +102,7 @@ static void handle_route_entry(mib2_ipRouteEntry_t *routeEntry)
 	nh.gate.ipv4.s_addr = routeEntry->ipRouteNextHop;
 
 	rib_add(AFI_IP, SAFI_UNICAST, VRF_DEFAULT, ZEBRA_ROUTE_KERNEL, 0,
-		zebra_flags, &prefix, NULL, &nh, 0, 0, 0, 0, 0);
+		zebra_flags, &prefix, NULL, &nh, 0, 0, 0, 0, 0, 0);
 }
 
 void route_read(struct zebra_ns *zns)
@@ -231,7 +231,7 @@ void route_read(struct zebra_ns *zns)
 				    != 0) {
 					zlog_debug(
 						"getmsg(data) returned "
-						"msgdata.len = %d (%% sizeof (mib2_ipRouteEntry_t) != 0)",
+						"msgdata.len = %d (%% sizeof(mib2_ipRouteEntry_t) != 0)",
 						msgdata.len);
 					goto exit;
 				}

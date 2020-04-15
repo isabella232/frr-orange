@@ -138,7 +138,7 @@ babel_create_routing_process (void)
     assert (babel_routing_process == NULL);
 
     /* Allocaste Babel instance. */
-    babel_routing_process = XCALLOC (MTYPE_BABEL, sizeof (struct babel));
+    babel_routing_process = XCALLOC(MTYPE_BABEL, sizeof(struct babel));
 
     /* Initialize timeouts */
     gettime(&babel_now);
@@ -165,7 +165,6 @@ babel_create_routing_process (void)
     return 0;
 fail:
     XFREE(MTYPE_BABEL, babel_routing_process);
-    babel_routing_process = NULL;
     return -1;
 }
 
@@ -324,7 +323,6 @@ babel_clean_routing_process(void)
 
     distribute_list_delete(&babel_routing_process->distribute_ctx);
     XFREE(MTYPE_BABEL, babel_routing_process);
-    babel_routing_process = NULL;
 }
 
 /* Function used with timeout. */
@@ -411,6 +409,7 @@ babel_main_loop(struct thread *thread)
     }
 
     assert(0); /* this line should never be reach */
+    return 0;
 }
 
 static void

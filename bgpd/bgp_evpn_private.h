@@ -188,6 +188,16 @@ struct bgp_evpn_info {
 	/* EVPN enable - advertise svi macip routes */
 	int advertise_svi_macip;
 
+	/* PIP feature knob */
+	bool advertise_pip;
+	/* PIP IP (sys ip) */
+	struct in_addr pip_ip;
+	struct in_addr pip_ip_static;
+	/* PIP MAC (sys MAC) */
+	struct ethaddr pip_rmac;
+	struct ethaddr pip_rmac_static;
+	struct ethaddr pip_rmac_zebra;
+	bool is_anycast_mac;
 };
 
 static inline int is_vrf_rd_configured(struct bgp *bgp_vrf)
@@ -356,7 +366,7 @@ static inline void encode_na_flag_extcomm(struct ecommunity_val *eval,
 		eval->val[2] |= ECOMMUNITY_EVPN_SUBTYPE_ND_ROUTER_FLAG;
 }
 
-static inline void ip_prefix_from_type5_prefix(struct prefix_evpn *evp,
+static inline void ip_prefix_from_type5_prefix(const struct prefix_evpn *evp,
 					       struct prefix *ip)
 {
 	memset(ip, 0, sizeof(struct prefix));
@@ -382,7 +392,7 @@ static inline int is_evpn_prefix_default(const struct prefix *evp)
 		1 : 0);
 }
 
-static inline void ip_prefix_from_type2_prefix(struct prefix_evpn *evp,
+static inline void ip_prefix_from_type2_prefix(const struct prefix_evpn *evp,
 					       struct prefix *ip)
 {
 	memset(ip, 0, sizeof(struct prefix));
@@ -399,7 +409,7 @@ static inline void ip_prefix_from_type2_prefix(struct prefix_evpn *evp,
 	}
 }
 
-static inline void ip_prefix_from_evpn_prefix(struct prefix_evpn *evp,
+static inline void ip_prefix_from_evpn_prefix(const struct prefix_evpn *evp,
 					      struct prefix *ip)
 {
 	if (evp->prefix.route_type == BGP_EVPN_MAC_IP_ROUTE)
@@ -422,8 +432,9 @@ static inline void build_evpn_type2_prefix(struct prefix_evpn *p,
 		memcpy(&p->prefix.macip_addr.ip, ip, sizeof(*ip));
 }
 
-static inline void build_type5_prefix_from_ip_prefix(struct prefix_evpn *evp,
-						     struct prefix *ip_prefix)
+static inline void
+build_type5_prefix_from_ip_prefix(struct prefix_evpn *evp,
+				  const struct prefix *ip_prefix)
 {
 	struct ipaddr ip;
 
@@ -501,6 +512,16 @@ static inline int is_es_local(struct evpnes *es)
 	return CHECK_FLAG(es->flags, EVPNES_LOCAL) ? 1 : 0;
 }
 
+static inline bool bgp_evpn_is_svi_macip_enabled(struct bgpevpn *vpn)
+{
+	struct bgp *bgp_evpn = NULL;
+
+	bgp_evpn = bgp_get_evpn();
+
+	return (bgp_evpn->evpn_info->advertise_svi_macip ||
+		vpn->advertise_svi_macip);
+}
+
 extern void bgp_evpn_install_uninstall_default_route(struct bgp *bgp_vrf,
 						     afi_t afi, safi_t safi,
 						     bool add);
@@ -543,4 +564,5 @@ extern struct evpnes *bgp_evpn_es_new(struct bgp *bgp, esi_t *esi,
 				      struct ipaddr *originator_ip);
 extern void bgp_evpn_es_free(struct bgp *bgp, struct evpnes *es);
 extern bool bgp_evpn_lookup_l3vni_l2vni_table(vni_t vni);
+extern int update_routes_for_vni(struct bgp *bgp, struct bgpevpn *vpn);
 #endif /* _BGP_EVPN_PRIVATE_H */

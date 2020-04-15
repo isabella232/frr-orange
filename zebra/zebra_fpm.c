@@ -70,7 +70,7 @@ DEFINE_MTYPE_STATIC(ZEBRA, FPM_MAC_INFO, "FPM_MAC_INFO");
 #define ZFPM_STATS_IVL_SECS        10
 #define FPM_MAX_MAC_MSG_LEN 512
 
-static void zfpm_iterate_rmac_table(struct hash_backet *backet, void *args);
+static void zfpm_iterate_rmac_table(struct hash_bucket *backet, void *args);
 
 /*
  * Structure that holds state for iterating over all route_node
@@ -498,6 +498,11 @@ static inline void zfpm_write_off(void)
 	THREAD_WRITE_OFF(zfpm_g->t_write);
 }
 
+static inline void zfpm_connect_off(void)
+{
+	THREAD_TIMER_OFF(zfpm_g->t_connect);
+}
+
 /*
  * zfpm_conn_up_thread_cb
  *
@@ -731,7 +736,6 @@ static int zfpm_read_cb(struct thread *thread)
 	fpm_msg_hdr_t *hdr;
 
 	zfpm_g->stats.read_cb_calls++;
-	zfpm_g->t_read = NULL;
 
 	/*
 	 * Check if async connect is now done.
@@ -1157,7 +1161,6 @@ static int zfpm_write_cb(struct thread *thread)
 	int num_writes;
 
 	zfpm_g->stats.write_cb_calls++;
-	zfpm_g->t_write = NULL;
 
 	/*
 	 * Check if async connect is now done.
@@ -1241,7 +1244,6 @@ static int zfpm_connect_cb(struct thread *t)
 	int sock, ret;
 	struct sockaddr_in serv;
 
-	zfpm_g->t_connect = NULL;
 	assert(zfpm_g->state == ZFPM_STATE_ACTIVE);
 
 	sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -1645,7 +1647,7 @@ static int zfpm_trigger_rmac_update(zebra_mac_t *rmac, zebra_l3vni_t *zl3vni,
  * Iterate over all the RMAC entries for the given L3VNI
  * and enqueue the RMAC for FPM processing.
  */
-static void zfpm_trigger_rmac_update_wrapper(struct hash_backet *backet,
+static void zfpm_trigger_rmac_update_wrapper(struct hash_bucket *backet,
 					     void *args)
 {
 	zebra_mac_t *zrmac = (zebra_mac_t *)backet->data;
@@ -1659,7 +1661,7 @@ static void zfpm_trigger_rmac_update_wrapper(struct hash_backet *backet,
  * This function iterates over all the L3VNIs to trigger
  * FPM updates for RMACs currently available.
  */
-static void zfpm_iterate_rmac_table(struct hash_backet *backet, void *args)
+static void zfpm_iterate_rmac_table(struct hash_bucket *backet, void *args)
 {
 	zebra_l3vni_t *zl3vni = (zebra_l3vni_t *)backet->data;
 
@@ -2029,11 +2031,24 @@ static int zfpm_init(struct thread_master *master)
 	return 0;
 }
 
+static int zfpm_fini(void)
+{
+	zfpm_write_off();
+	zfpm_read_off();
+	zfpm_connect_off();
+
+	zfpm_stop_stats_timer();
+
+	hook_unregister(rib_update, zfpm_trigger_update);
+	return 0;
+}
+
 static int zebra_fpm_module_init(void)
 {
 	hook_register(rib_update, zfpm_trigger_update);
 	hook_register(zebra_rmac_update, zfpm_trigger_rmac_update);
 	hook_register(frr_late_init, zfpm_init);
+	hook_register(frr_early_fini, zfpm_fini);
 	return 0;
 }
 

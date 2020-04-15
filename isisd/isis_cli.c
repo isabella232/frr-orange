@@ -32,7 +32,7 @@
 #include "yang.h"
 #include "lib/linklist.h"
 #include "isisd/isisd.h"
-#include "isisd/isis_cli.h"
+#include "isisd/isis_nb.h"
 #include "isisd/isis_misc.h"
 #include "isisd/isis_circuit.h"
 #include "isisd/isis_csm.h"
@@ -402,21 +402,7 @@ DEFPY(no_is_type, no_is_type_cmd,
       "Act as both a station router and an area router\n"
       "Act as an area router only\n")
 {
-	const char *value = NULL;
-	struct isis_area *area;
-
-	area = nb_running_get_entry(NULL, VTY_CURR_XPATH, false);
-
-	/*
-	 * Put the is-type back to defaults:
-	 * - level-1-2 on first area
-	 * - level-1 for the rest
-	 */
-	if (area && listgetdata(listhead(isis->area_list)) == area)
-		value = "level-1-2";
-	else
-		value = NULL;
-	nb_cli_enqueue_change(vty, "./is-type", NB_OP_MODIFY, value);
+	nb_cli_enqueue_change(vty, "./is-type", NB_OP_MODIFY, NULL);
 
 	return nb_cli_apply_changes(vty, NULL);
 }
@@ -527,7 +513,7 @@ DEFPY(no_metric_style, no_metric_style_cmd,
       "Send and accept both styles of TLVs during transition\n"
       "Use new style of TLVs to carry wider metric\n")
 {
-	nb_cli_enqueue_change(vty, "./metric-style", NB_OP_MODIFY, "narrow");
+	nb_cli_enqueue_change(vty, "./metric-style", NB_OP_MODIFY, NULL);
 
 	return nb_cli_apply_changes(vty, NULL);
 }
@@ -640,7 +626,8 @@ void cli_show_isis_domain_pwd(struct vty *vty, struct lyd_node *dnode,
 }
 
 /*
- * XPath: /frr-isisd:isis/instance/lsp/generation-interval
+ * XPath: /frr-isisd:isis/instance/lsp/timers/level-1/generation-interval
+ * XPath: /frr-isisd:isis/instance/lsp/timers/level-2/generation-interval
  */
 DEFPY(lsp_gen_interval, lsp_gen_interval_cmd,
       "lsp-gen-interval [level-1|level-2]$level (1-120)$val",
@@ -650,11 +637,13 @@ DEFPY(lsp_gen_interval, lsp_gen_interval_cmd,
       "Minimum interval in seconds\n")
 {
 	if (!level || strmatch(level, "level-1"))
-		nb_cli_enqueue_change(vty, "./lsp/generation-interval/level-1",
-				      NB_OP_MODIFY, val_str);
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-1/generation-interval",
+			NB_OP_MODIFY, val_str);
 	if (!level || strmatch(level, "level-2"))
-		nb_cli_enqueue_change(vty, "./lsp/generation-interval/level-2",
-				      NB_OP_MODIFY, val_str);
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-2/generation-interval",
+			NB_OP_MODIFY, val_str);
 
 	return nb_cli_apply_changes(vty, NULL);
 }
@@ -668,31 +657,20 @@ DEFPY(no_lsp_gen_interval, no_lsp_gen_interval_cmd,
       "Minimum interval in seconds\n")
 {
 	if (!level || strmatch(level, "level-1"))
-		nb_cli_enqueue_change(vty, "./lsp/generation-interval/level-1",
-				      NB_OP_MODIFY, NULL);
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-1/generation-interval",
+			NB_OP_MODIFY, NULL);
 	if (!level || strmatch(level, "level-2"))
-		nb_cli_enqueue_change(vty, "./lsp/generation-interval/level-2",
-				      NB_OP_MODIFY, NULL);
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-2/generation-interval",
+			NB_OP_MODIFY, NULL);
 
 	return nb_cli_apply_changes(vty, NULL);
 }
 
-void cli_show_isis_lsp_gen_interval(struct vty *vty, struct lyd_node *dnode,
-				    bool show_defaults)
-{
-	const char *l1 = yang_dnode_get_string(dnode, "./level-1");
-	const char *l2 = yang_dnode_get_string(dnode, "./level-2");
-
-	if (strmatch(l1, l2))
-		vty_out(vty, " lsp-gen-interval %s\n", l1);
-	else {
-		vty_out(vty, " lsp-gen-interval level-1 %s\n", l1);
-		vty_out(vty, " lsp-gen-interval level-2 %s\n", l2);
-	}
-}
-
 /*
- * XPath: /frr-isisd:isis/instance/lsp/refresh-interval
+ * XPath: /frr-isisd:isis/instance/lsp/timers/level-1/refresh-interval
+ * XPath: /frr-isisd:isis/instance/lsp/timers/level-2/refresh-interval
  */
 DEFPY(lsp_refresh_interval, lsp_refresh_interval_cmd,
       "lsp-refresh-interval [level-1|level-2]$level (1-65235)$val",
@@ -702,10 +680,12 @@ DEFPY(lsp_refresh_interval, lsp_refresh_interval_cmd,
       "LSP refresh interval in seconds\n")
 {
 	if (!level || strmatch(level, "level-1"))
-		nb_cli_enqueue_change(vty, "./lsp/refresh-interval/level-1",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/refresh-interval",
 				      NB_OP_MODIFY, val_str);
 	if (!level || strmatch(level, "level-2"))
-		nb_cli_enqueue_change(vty, "./lsp/refresh-interval/level-2",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/refresh-interval",
 				      NB_OP_MODIFY, val_str);
 
 	return nb_cli_apply_changes(vty, NULL);
@@ -720,32 +700,22 @@ DEFPY(no_lsp_refresh_interval, no_lsp_refresh_interval_cmd,
       "LSP refresh interval in seconds\n")
 {
 	if (!level || strmatch(level, "level-1"))
-		nb_cli_enqueue_change(vty, "./lsp/refresh-interval/level-1",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/refresh-interval",
 				      NB_OP_MODIFY, NULL);
 	if (!level || strmatch(level, "level-2"))
-		nb_cli_enqueue_change(vty, "./lsp/refresh-interval/level-2",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/refresh-interval",
 				      NB_OP_MODIFY, NULL);
 
 	return nb_cli_apply_changes(vty, NULL);
 }
 
-void cli_show_isis_lsp_ref_interval(struct vty *vty, struct lyd_node *dnode,
-				    bool show_defaults)
-{
-	const char *l1 = yang_dnode_get_string(dnode, "./level-1");
-	const char *l2 = yang_dnode_get_string(dnode, "./level-2");
-
-	if (strmatch(l1, l2))
-		vty_out(vty, " lsp-refresh-interval %s\n", l1);
-	else {
-		vty_out(vty, " lsp-refresh-interval level-1 %s\n", l1);
-		vty_out(vty, " lsp-refresh-interval level-2 %s\n", l2);
-	}
-}
-
 /*
- * XPath: /frr-isisd:isis/instance/lsp/maximum-lifetime
+ * XPath: /frr-isisd:isis/instance/lsp/timers/level-1/maximum-lifetime
+ * XPath: /frr-isisd:isis/instance/lsp/timers/level-1/maximum-lifetime
  */
+
 DEFPY(max_lsp_lifetime, max_lsp_lifetime_cmd,
       "max-lsp-lifetime [level-1|level-2]$level (350-65535)$val",
       "Maximum LSP lifetime\n"
@@ -754,10 +724,12 @@ DEFPY(max_lsp_lifetime, max_lsp_lifetime_cmd,
       "LSP lifetime in seconds\n")
 {
 	if (!level || strmatch(level, "level-1"))
-		nb_cli_enqueue_change(vty, "./lsp/maximum-lifetime/level-1",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/maximum-lifetime",
 				      NB_OP_MODIFY, val_str);
 	if (!level || strmatch(level, "level-2"))
-		nb_cli_enqueue_change(vty, "./lsp/maximum-lifetime/level-2",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/maximum-lifetime",
 				      NB_OP_MODIFY, val_str);
 
 	return nb_cli_apply_changes(vty, NULL);
@@ -772,26 +744,125 @@ DEFPY(no_max_lsp_lifetime, no_max_lsp_lifetime_cmd,
       "LSP lifetime in seconds\n")
 {
 	if (!level || strmatch(level, "level-1"))
-		nb_cli_enqueue_change(vty, "./lsp/maximum-lifetime/level-1",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/maximum-lifetime",
 				      NB_OP_MODIFY, NULL);
 	if (!level || strmatch(level, "level-2"))
-		nb_cli_enqueue_change(vty, "./lsp/maximum-lifetime/level-2",
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/maximum-lifetime",
 				      NB_OP_MODIFY, NULL);
 
 	return nb_cli_apply_changes(vty, NULL);
 }
 
-void cli_show_isis_lsp_max_lifetime(struct vty *vty, struct lyd_node *dnode,
-				    bool show_defaults)
-{
-	const char *l1 = yang_dnode_get_string(dnode, "./level-1");
-	const char *l2 = yang_dnode_get_string(dnode, "./level-2");
+/* unified LSP timers command
+ * XPath: /frr-isisd:isis/instance/lsp/timers
+ */
 
-	if (strmatch(l1, l2))
-		vty_out(vty, " max-lsp-lifetime %s\n", l1);
+DEFPY(lsp_timers, lsp_timers_cmd,
+      "lsp-timers [level-1|level-2]$level gen-interval (1-120)$gen refresh-interval (1-65235)$refresh max-lifetime (350-65535)$lifetime",
+      "LSP-related timers\n"
+      "LSP-related timers for Level 1 only\n"
+      "LSP-related timers for Level 2 only\n"
+      "Minimum interval between regenerating same LSP\n"
+      "Generation interval in seconds\n"
+      "LSP refresh interval\n"
+      "LSP refresh interval in seconds\n"
+      "Maximum LSP lifetime\n"
+      "Maximum LSP lifetime in seconds\n")
+{
+	if (!level || strmatch(level, "level-1")) {
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-1/generation-interval",
+			NB_OP_MODIFY, gen_str);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/refresh-interval",
+				      NB_OP_MODIFY, refresh_str);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/maximum-lifetime",
+				      NB_OP_MODIFY, lifetime_str);
+	}
+	if (!level || strmatch(level, "level-2")) {
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-2/generation-interval",
+			NB_OP_MODIFY, gen_str);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/refresh-interval",
+				      NB_OP_MODIFY, refresh_str);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/maximum-lifetime",
+				      NB_OP_MODIFY, lifetime_str);
+	}
+
+	return nb_cli_apply_changes(vty, NULL);
+}
+
+DEFPY(no_lsp_timers, no_lsp_timers_cmd,
+      "no lsp-timers [level-1|level-2]$level [gen-interval (1-120) refresh-interval (1-65235) max-lifetime (350-65535)]",
+      NO_STR
+      "LSP-related timers\n"
+      "LSP-related timers for Level 1 only\n"
+      "LSP-related timers for Level 2 only\n"
+      "Minimum interval between regenerating same LSP\n"
+      "Generation interval in seconds\n"
+      "LSP refresh interval\n"
+      "LSP refresh interval in seconds\n"
+      "Maximum LSP lifetime\n"
+      "Maximum LSP lifetime in seconds\n")
+{
+	if (!level || strmatch(level, "level-1")) {
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-1/generation-interval",
+			NB_OP_MODIFY, NULL);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/refresh-interval",
+				      NB_OP_MODIFY, NULL);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-1/maximum-lifetime",
+				      NB_OP_MODIFY, NULL);
+	}
+	if (!level || strmatch(level, "level-2")) {
+		nb_cli_enqueue_change(
+			vty, "./lsp/timers/level-2/generation-interval",
+			NB_OP_MODIFY, NULL);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/refresh-interval",
+				      NB_OP_MODIFY, NULL);
+		nb_cli_enqueue_change(vty,
+				      "./lsp/timers/level-2/maximum-lifetime",
+				      NB_OP_MODIFY, NULL);
+	}
+
+	return nb_cli_apply_changes(vty, NULL);
+}
+
+void cli_show_isis_lsp_timers(struct vty *vty, struct lyd_node *dnode,
+			      bool show_defaults)
+{
+	const char *l1_refresh =
+		yang_dnode_get_string(dnode, "./level-1/refresh-interval");
+	const char *l2_refresh =
+		yang_dnode_get_string(dnode, "./level-2/refresh-interval");
+	const char *l1_lifetime =
+		yang_dnode_get_string(dnode, "./level-1/maximum-lifetime");
+	const char *l2_lifetime =
+		yang_dnode_get_string(dnode, "./level-2/maximum-lifetime");
+	const char *l1_gen =
+		yang_dnode_get_string(dnode, "./level-1/generation-interval");
+	const char *l2_gen =
+		yang_dnode_get_string(dnode, "./level-2/generation-interval");
+	if (strmatch(l1_refresh, l2_refresh)
+	    && strmatch(l1_lifetime, l2_lifetime) && strmatch(l1_gen, l2_gen))
+		vty_out(vty,
+			" lsp-timers gen-interval %s refresh-interval %s max-lifetime %s\n",
+			l1_gen, l1_refresh, l1_lifetime);
 	else {
-		vty_out(vty, " max-lsp-lifetime level-1 %s\n", l1);
-		vty_out(vty, " max-lsp-lifetime level-2 %s\n", l2);
+		vty_out(vty,
+			" lsp-timers level-1 gen-interval %s refresh-interval %s max-lifetime %s\n",
+			l1_gen, l1_refresh, l1_lifetime);
+		vty_out(vty,
+			" lsp-timers level-2 gen-interval %s refresh-interval %s max-lifetime %s\n",
+			l2_gen, l2_refresh, l2_lifetime);
 	}
 }
 
@@ -1398,8 +1469,8 @@ void cli_show_ip_isis_metric(struct vty *vty, struct lyd_node *dnode,
 	if (strmatch(l1, l2))
 		vty_out(vty, " isis metric %s\n", l1);
 	else {
-		vty_out(vty, " isis metric %s level-1\n", l1);
-		vty_out(vty, " isis metric %s level-2\n", l2);
+		vty_out(vty, " isis metric level-1 %s\n", l1);
+		vty_out(vty, " isis metric level-2 %s\n", l2);
 	}
 }
 
@@ -1456,8 +1527,8 @@ void cli_show_ip_isis_hello_interval(struct vty *vty, struct lyd_node *dnode,
 	if (strmatch(l1, l2))
 		vty_out(vty, " isis hello-interval %s\n", l1);
 	else {
-		vty_out(vty, " isis hello-interval %s level-1\n", l1);
-		vty_out(vty, " isis hello-interval %s level-2\n", l2);
+		vty_out(vty, " isis hello-interval level-1 %s\n", l1);
+		vty_out(vty, " isis hello-interval level-2 %s\n", l2);
 	}
 }
 
@@ -1514,8 +1585,8 @@ void cli_show_ip_isis_hello_multi(struct vty *vty, struct lyd_node *dnode,
 	if (strmatch(l1, l2))
 		vty_out(vty, " isis hello-multiplier %s\n", l1);
 	else {
-		vty_out(vty, " isis hello-multiplier %s level-1\n", l1);
-		vty_out(vty, " isis hello-multiplier %s level-2\n", l2);
+		vty_out(vty, " isis hello-multiplier level-1 %s\n", l1);
+		vty_out(vty, " isis hello-multiplier level-2 %s\n", l2);
 	}
 }
 
@@ -2001,6 +2072,8 @@ void isis_cli_init(void)
 	install_element(ISIS_NODE, &no_lsp_refresh_interval_cmd);
 	install_element(ISIS_NODE, &max_lsp_lifetime_cmd);
 	install_element(ISIS_NODE, &no_max_lsp_lifetime_cmd);
+	install_element(ISIS_NODE, &lsp_timers_cmd);
+	install_element(ISIS_NODE, &no_lsp_timers_cmd);
 	install_element(ISIS_NODE, &area_lsp_mtu_cmd);
 	install_element(ISIS_NODE, &no_area_lsp_mtu_cmd);
 

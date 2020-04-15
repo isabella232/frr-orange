@@ -25,7 +25,6 @@
 #include "thread.h"
 #include "command.h"
 #include "memory.h"
-#include "memory_vty.h"
 #include "prefix.h"
 #include "filter.h"
 #include "keychain.h"
@@ -36,8 +35,10 @@
 #include "vrf.h"
 #include "if_rmap.h"
 #include "libfrr.h"
+#include "routemap.h"
 
 #include "ripd/ripd.h"
+#include "ripd/rip_nb.h"
 #include "ripd/rip_errors.h"
 
 /* ripd options. */
@@ -112,9 +113,10 @@ static struct quagga_signal_t ripd_signals[] = {
 	},
 };
 
-static const struct frr_yang_module_info *ripd_yang_modules[] = {
+static const struct frr_yang_module_info *const ripd_yang_modules[] = {
 	&frr_interface_info,
 	&frr_ripd_info,
+	&frr_route_map_info,
 };
 
 FRR_DAEMON_INFO(ripd, RIP, .vty_port = RIP_VTY_PORT,
@@ -178,5 +180,5 @@ int main(int argc, char **argv)
 	frr_run(master);
 
 	/* Not reached. */
-	return (0);
+	return 0;
 }

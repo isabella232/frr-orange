@@ -60,8 +60,13 @@ static void zebra_vrf_add_update(struct zebra_vrf *zvrf)
 	if (IS_ZEBRA_DEBUG_EVENT)
 		zlog_debug("MESSAGE: ZEBRA_VRF_ADD %s", zvrf_name(zvrf));
 
-	for (ALL_LIST_ELEMENTS(zrouter.client_list, node, nnode, client))
+	for (ALL_LIST_ELEMENTS(zrouter.client_list, node, nnode, client)) {
+		/* Do not send unsolicited messages to synchronous clients. */
+		if (client->synchronous)
+			continue;
+
 		zsend_vrf_add(client, zvrf);
+	}
 }
 
 static void zebra_vrf_delete_update(struct zebra_vrf *zvrf)
@@ -72,8 +77,13 @@ static void zebra_vrf_delete_update(struct zebra_vrf *zvrf)
 	if (IS_ZEBRA_DEBUG_EVENT)
 		zlog_debug("MESSAGE: ZEBRA_VRF_DELETE %s", zvrf_name(zvrf));
 
-	for (ALL_LIST_ELEMENTS(zrouter.client_list, node, nnode, client))
+	for (ALL_LIST_ELEMENTS(zrouter.client_list, node, nnode, client)) {
+		/* Do not send unsolicited messages to synchronous clients. */
+		if (client->synchronous)
+			continue;
+
 		zsend_vrf_delete(client, zvrf);
+	}
 }
 
 void zebra_vrf_update_all(struct zserv *client)
@@ -168,7 +178,7 @@ static int zebra_vrf_disable(struct vrf *vrf)
 	zebra_vxlan_vrf_disable(zvrf);
 
 #if defined(HAVE_RTADV)
-	rtadv_terminate(zvrf);
+	rtadv_vrf_terminate(zvrf);
 #endif
 
 	/* Inform clients that the VRF is now inactive. This is a
@@ -343,13 +353,12 @@ int zebra_vrf_has_config(struct zebra_vrf *zvrf)
  * - case VRF backend is default : on default VRF only
  * - case VRF backend is netns : on all VRFs
  */
-struct route_table *zebra_vrf_table_with_table_id(afi_t afi, safi_t safi,
-						  vrf_id_t vrf_id,
-						  uint32_t table_id)
+struct route_table *zebra_vrf_lookup_table_with_table_id(afi_t afi, safi_t safi,
+							 vrf_id_t vrf_id,
+							 uint32_t table_id)
 {
 	struct zebra_vrf *zvrf = vrf_info_lookup(vrf_id);
 	struct other_route_table ort, *otable;
-	struct route_table *table;
 
 	if (!zvrf)
 		return NULL;
@@ -364,9 +373,28 @@ struct route_table *zebra_vrf_table_with_table_id(afi_t afi, safi_t safi,
 	ort.safi = safi;
 	ort.table_id = table_id;
 	otable = otable_find(&zvrf->other_tables, &ort);
+
 	if (otable)
 		return otable->table;
 
+	return NULL;
+}
+
+struct route_table *zebra_vrf_get_table_with_table_id(afi_t afi, safi_t safi,
+						      vrf_id_t vrf_id,
+						      uint32_t table_id)
+{
+	struct zebra_vrf *zvrf = vrf_info_lookup(vrf_id);
+	struct other_route_table *otable;
+	struct route_table *table;
+
+	table = zebra_vrf_lookup_table_with_table_id(afi, safi, vrf_id,
+						     table_id);
+
+	if (table)
+		goto done;
+
+	/* Create it as an `other` table */
 	table = zebra_router_get_table(zvrf, table_id, afi, safi);
 
 	otable = XCALLOC(MTYPE_OTHER_TABLE, sizeof(*otable));
@@ -376,6 +404,7 @@ struct route_table *zebra_vrf_table_with_table_id(afi_t afi, safi_t safi,
 	otable->table = table;
 	otable_add(&zvrf->other_tables, otable);
 
+done:
 	return table;
 }
 

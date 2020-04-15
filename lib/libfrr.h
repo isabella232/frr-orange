@@ -98,7 +98,7 @@ struct frr_daemon_info {
 
 	struct zebra_privs_t *privs;
 
-	const struct frr_yang_module_info **yang_modules;
+	const struct frr_yang_module_info *const *yang_modules;
 	size_t n_yang_modules;
 
 	bool log_always;
@@ -128,7 +128,8 @@ extern void frr_preinit(struct frr_daemon_info *daemon, int argc, char **argv);
 extern void frr_opt_add(const char *optstr, const struct option *longopts,
 			const char *helpstr);
 extern int frr_getopt(int argc, char *const argv[], int *longindex);
-extern void frr_help_exit(int status);
+
+extern __attribute__((__noreturn__)) void frr_help_exit(int status);
 
 extern struct thread_master *frr_init(void);
 extern const char *frr_get_progname(void);

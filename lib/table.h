@@ -45,7 +45,7 @@ struct route_table;
  * Function vector that can be used by a client to customize the
  * behavior of one or more route tables.
  */
-typedef struct route_table_delegate_t_ route_table_delegate_t;
+typedef const struct route_table_delegate_t_ route_table_delegate_t;
 
 typedef struct route_node *(*route_table_create_node_func_t)(
 	route_table_delegate_t *, struct route_table *);
@@ -330,6 +330,10 @@ static inline int route_table_iter_started(route_table_iter_t *iter)
 {
 	return iter->state != RT_ITER_STATE_INIT;
 }
+
+#ifdef _FRR_ATTRIBUTE_PRINTFRR
+#pragma FRR printfrr_ext "%pRN"  (struct route_node *)
+#endif
 
 #ifdef __cplusplus
 }

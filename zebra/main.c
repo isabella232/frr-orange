@@ -27,7 +27,6 @@
 #include "filter.h"
 #include "memory.h"
 #include "zebra_memory.h"
-#include "memory_vty.h"
 #include "prefix.h"
 #include "log.h"
 #include "plist.h"
@@ -54,6 +53,7 @@
 #include "zebra/zebra_rnh.h"
 #include "zebra/zebra_pbr.h"
 #include "zebra/zebra_vxlan.h"
+#include "zebra/zebra_routemap.h"
 
 #if defined(HANDLE_NETLINK_FUZZING)
 #include "zebra/kernel_netlink.h"
@@ -84,7 +84,7 @@ uint32_t nl_rcvbufsize = 4194304;
 
 #define OPTION_V6_RR_SEMANTICS 2000
 /* Command line options. */
-struct option longopts[] = {
+const struct option longopts[] = {
 	{"batch", no_argument, NULL, 'b'},
 	{"allow_delete", no_argument, NULL, 'a'},
 	{"keep_kernel", no_argument, NULL, 'k'},
@@ -145,9 +145,16 @@ static void sigint(void)
 	atomic_store_explicit(&zrouter.in_shutdown, true,
 			      memory_order_relaxed);
 
+	/* send RA lifetime of 0 before stopping. rfc4861/6.2.5 */
+	rtadv_stop_ra_all();
+
 	frr_early_fini();
 
 	zebra_dplane_pre_finish();
+
+	/* Clean up GR related info. */
+	zebra_gr_stale_client_cleanup(zrouter.stale_client_list);
+	list_delete_all_node(zrouter.stale_client_list);
 
 	for (ALL_LIST_ELEMENTS(zrouter.client_list, ln, nn, client))
 		zserv_close_client(client);
@@ -165,14 +172,22 @@ static void sigint(void)
 		}
 	if (zrouter.lsp_process_q)
 		work_queue_free_and_null(&zrouter.lsp_process_q);
+
 	vrf_terminate();
+	rtadv_terminate();
 
 	ns_walk_func(zebra_ns_early_shutdown);
 	zebra_ns_notify_close();
 
 	access_list_reset();
 	prefix_list_reset();
-	route_map_finish();
+	/*
+	 * zebra_routemap_finish will
+	 * 1 set rmap upd timer to 0 so that rmap update wont be scheduled again
+	 * 2 Put off the rmap update thread
+	 * 3 route_map_finish
+	 */
+	zebra_routemap_finish();
 
 	list_delete(&zrouter.client_list);
 
@@ -228,8 +243,10 @@ struct quagga_signal_t zebra_signals[] = {
 	},
 };
 
-static const struct frr_yang_module_info *zebra_yang_modules[] = {
+static const struct frr_yang_module_info *const zebra_yang_modules[] = {
 	&frr_interface_info,
+	&frr_route_map_info,
+	&frr_zebra_info,
 };
 
 FRR_DAEMON_INFO(
@@ -314,17 +331,21 @@ int main(int argc, char **argv)
 		case 'a':
 			allow_delete = 1;
 			break;
-		case 'e':
-			zrouter.multipath_num = atoi(optarg);
-			if (zrouter.multipath_num > MULTIPATH_NUM
-			    || zrouter.multipath_num <= 0) {
+		case 'e': {
+			unsigned long int parsed_multipath =
+				strtoul(optarg, NULL, 10);
+			if (parsed_multipath == 0
+			    || parsed_multipath > MULTIPATH_NUM
+			    || parsed_multipath > UINT32_MAX) {
 				flog_err(
 					EC_ZEBRA_BAD_MULTIPATH_NUM,
-					"Multipath Number specified must be less than %d and greater than 0",
+					"Multipath Number specified must be less than %u and greater than 0",
 					MULTIPATH_NUM);
 				return 1;
 			}
+			zrouter.multipath_num = parsed_multipath;
 			break;
+		}
 		case 'o':
 			vrf_default_name_configured = optarg;
 			break;

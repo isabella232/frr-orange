@@ -158,12 +158,12 @@ const char *ospf_timeval_dump(struct timeval *t, char *buf, size_t size)
 #define HOUR_IN_SECONDS		(60*MINUTE_IN_SECONDS)
 #define DAY_IN_SECONDS		(24*HOUR_IN_SECONDS)
 #define WEEK_IN_SECONDS		(7*DAY_IN_SECONDS)
-	unsigned long w, d, h, m, s, ms, us;
+	unsigned long w, d, h, m, ms, us;
 
 	if (!t)
 		return "inactive";
 
-	w = d = h = m = s = ms = us = 0;
+	w = d = h = m = ms = 0;
 	memset(buf, 0, size);
 
 	us = t->tv_usec;
@@ -386,7 +386,7 @@ static void ospf_packet_db_desc_dump(struct stream *s, uint16_t length)
 	zlog_debug("  Options %d (%s)", dd->options,
 		   ospf_options_dump(dd->options));
 	zlog_debug("  Flags %d (%s)", dd->flags,
-		   ospf_dd_flags_dump(dd->flags, dd_flags, sizeof dd_flags));
+		   ospf_dd_flags_dump(dd->flags, dd_flags, sizeof(dd_flags)));
 	zlog_debug("  Sequence Number 0x%08lx",
 		   (unsigned long)ntohl(dd->dd_seqnum));
 
@@ -499,23 +499,6 @@ static void ospf_packet_ls_ack_dump(struct stream *s, uint16_t length)
 	ospf_lsa_header_list_dump(s, length);
 
 	stream_set_getp(s, sp);
-}
-
-/* Expects header to be in host order */
-void ospf_ip_header_dump(struct ip *iph)
-{
-	/* IP Header dump. */
-	zlog_debug("ip_v %d", iph->ip_v);
-	zlog_debug("ip_hl %d", iph->ip_hl);
-	zlog_debug("ip_tos %d", iph->ip_tos);
-	zlog_debug("ip_len %d", iph->ip_len);
-	zlog_debug("ip_id %u", (uint32_t)iph->ip_id);
-	zlog_debug("ip_off %u", (uint32_t)iph->ip_off);
-	zlog_debug("ip_ttl %d", iph->ip_ttl);
-	zlog_debug("ip_p %d", iph->ip_p);
-	zlog_debug("ip_sum 0x%x", (uint32_t)iph->ip_sum);
-	zlog_debug("ip_src %s", inet_ntoa(iph->ip_src));
-	zlog_debug("ip_dst %s", inet_ntoa(iph->ip_dst));
 }
 
 static void ospf_header_dump(struct ospf_header *ospfh)

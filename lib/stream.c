@@ -543,6 +543,27 @@ uint64_t stream_getq(struct stream *s)
 	return q;
 }
 
+bool stream_getq2(struct stream *s, uint64_t *q)
+{
+	STREAM_VERIFY_SANE(s);
+
+	if (STREAM_READABLE(s) < sizeof(uint64_t)) {
+		STREAM_BOUND_WARN2(s, "get uint64");
+		return false;
+	}
+
+	*q = ((uint64_t)s->data[s->getp++]) << 56;
+	*q |= ((uint64_t)s->data[s->getp++]) << 48;
+	*q |= ((uint64_t)s->data[s->getp++]) << 40;
+	*q |= ((uint64_t)s->data[s->getp++]) << 32;
+	*q |= ((uint64_t)s->data[s->getp++]) << 24;
+	*q |= ((uint64_t)s->data[s->getp++]) << 16;
+	*q |= ((uint64_t)s->data[s->getp++]) << 8;
+	*q |= ((uint64_t)s->data[s->getp++]);
+
+	return true;
+}
+
 /* Get next long word from the stream. */
 uint32_t stream_get_ipv4(struct stream *s)
 {
@@ -812,7 +833,7 @@ int stream_put_ipv4(struct stream *s, uint32_t l)
 }
 
 /* Put long word to the stream. */
-int stream_put_in_addr(struct stream *s, struct in_addr *addr)
+int stream_put_in_addr(struct stream *s, const struct in_addr *addr)
 {
 	STREAM_VERIFY_SANE(s);
 
@@ -828,7 +849,8 @@ int stream_put_in_addr(struct stream *s, struct in_addr *addr)
 }
 
 /* Put in_addr at location in the stream. */
-int stream_put_in_addr_at(struct stream *s, size_t putp, struct in_addr *addr)
+int stream_put_in_addr_at(struct stream *s, size_t putp,
+			  const struct in_addr *addr)
 {
 	STREAM_VERIFY_SANE(s);
 
@@ -842,7 +864,8 @@ int stream_put_in_addr_at(struct stream *s, size_t putp, struct in_addr *addr)
 }
 
 /* Put in6_addr at location in the stream. */
-int stream_put_in6_addr_at(struct stream *s, size_t putp, struct in6_addr *addr)
+int stream_put_in6_addr_at(struct stream *s, size_t putp,
+			   const struct in6_addr *addr)
 {
 	STREAM_VERIFY_SANE(s);
 
@@ -856,7 +879,7 @@ int stream_put_in6_addr_at(struct stream *s, size_t putp, struct in6_addr *addr)
 }
 
 /* Put prefix by nlri type format. */
-int stream_put_prefix_addpath(struct stream *s, struct prefix *p,
+int stream_put_prefix_addpath(struct stream *s, const struct prefix *p,
 			      int addpath_encode, uint32_t addpath_tx_id)
 {
 	size_t psize;
@@ -890,13 +913,13 @@ int stream_put_prefix_addpath(struct stream *s, struct prefix *p,
 	return psize;
 }
 
-int stream_put_prefix(struct stream *s, struct prefix *p)
+int stream_put_prefix(struct stream *s, const struct prefix *p)
 {
 	return stream_put_prefix_addpath(s, p, 0, 0);
 }
 
 /* Put NLRI with label */
-int stream_put_labeled_prefix(struct stream *s, struct prefix *p,
+int stream_put_labeled_prefix(struct stream *s, const struct prefix *p,
 			      mpls_label_t *label, int addpath_encode,
 			      uint32_t addpath_tx_id)
 {

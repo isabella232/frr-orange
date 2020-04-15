@@ -101,9 +101,12 @@ RB_PROTOTYPE(vrf_name_head, vrf, name_entry, vrf_name_compare)
 DECLARE_QOBJ_TYPE(vrf)
 
 /* Allow VRF with netns as backend */
-#define VRF_BACKEND_VRF_LITE   0
-#define VRF_BACKEND_NETNS      1
-#define VRF_BACKEND_UNKNOWN    2
+enum vrf_backend_type {
+	VRF_BACKEND_VRF_LITE,
+	VRF_BACKEND_NETNS,
+	VRF_BACKEND_UNKNOWN,
+	VRF_BACKEND_MAX,
+};
 
 extern struct vrf_id_head vrfs_by_id;
 extern struct vrf_name_head vrfs_by_name;
@@ -113,6 +116,8 @@ extern struct vrf *vrf_lookup_by_name(const char *);
 extern struct vrf *vrf_get(vrf_id_t, const char *);
 extern const char *vrf_id_to_name(vrf_id_t vrf_id);
 extern vrf_id_t vrf_name_to_id(const char *);
+
+#define VRF_LOGNAME(V) V ? V->name : "Unknown"
 
 #define VRF_GET_ID(V, NAME, USE_JSON)                                          \
 	do {                                                                   \
@@ -218,13 +223,36 @@ extern void vrf_terminate(void);
  * or call network operations
  */
 
-/* Create a socket serving for the given VRF */
+/*
+ * Create a new socket associated with a VRF.
+ *
+ * This is a wrapper that ensures correct behavior when using namespace VRFs.
+ * In the namespace case, the socket is created within the namespace. In the
+ * non-namespace case, this is equivalent to socket().
+ *
+ * If name is provided, this is provided to vrf_bind() to bind the socket to
+ * the VRF. This is only relevant when using VRF-lite.
+ *
+ * Summary:
+ * - Namespace: pass vrf_id but not name
+ * - VRF-lite: pass vrf_id and name of VRF device to bind to
+ * - VRF-lite, no binding: pass vrf_id but not name, or just use socket()
+ */
 extern int vrf_socket(int domain, int type, int protocol, vrf_id_t vrf_id,
 		      const char *name);
 
 extern int vrf_sockunion_socket(const union sockunion *su, vrf_id_t vrf_id,
 				const char *name);
 
+/*
+ * Binds a socket to a VRF device.
+ *
+ * If name is null, the socket is not bound, irrespective of any other
+ * arguments.
+ *
+ * name should be the name of the VRF device. vrf_id should be the
+ * corresponding vrf_id (the ifindex of the device).
+ */
 extern int vrf_bind(vrf_id_t vrf_id, int fd, const char *name);
 
 /* VRF ioctl operations */
@@ -267,10 +295,10 @@ extern void vrf_install_commands(void);
  * VRF utilities
  */
 
-/* API for configuring VRF backend
- * should be called from zebra only
+/*
+ * API for configuring VRF backend
  */
-extern void vrf_configure_backend(int vrf_backend_netns);
+extern int vrf_configure_backend(enum vrf_backend_type backend);
 extern int vrf_get_backend(void);
 extern int vrf_is_backend_netns(void);
 
