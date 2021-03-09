@@ -100,6 +100,8 @@ enum bgp_af_index {
 	BGP_AF_IPV6_LBL_UNICAST,
 	BGP_AF_IPV4_FLOWSPEC,
 	BGP_AF_IPV6_FLOWSPEC,
+	BGP_AF_LINK_STATE,	/*BGP-LS implementation*/
+	BGP_AF_LINK_STATE_VPN,	/*BGP-LS implementation*/
 	BGP_AF_MAX
 };
 
@@ -373,6 +375,7 @@ struct bgp {
 	} update_group_stats;
 
 	struct bgp_snmp_stats *snmp_stats;
+	struct bgp_lsdb *lsdb ;		/* BGP-LS configuration */
 
 	/* BGP configuration.  */
 	uint16_t config;
@@ -1677,6 +1680,7 @@ struct bgp_nlri {
 #define BGP_ATTR_PMSI_TUNNEL                    22
 #define BGP_ATTR_ENCAP                          23
 #define BGP_ATTR_IPV6_EXT_COMMUNITIES           25
+#define BGP_ATTR_LINK_STATE                     29
 #define BGP_ATTR_LARGE_COMMUNITIES              32
 #define BGP_ATTR_PREFIX_SID                     40
 #define BGP_ATTR_SRTE_COLOR                     51
@@ -2219,6 +2223,19 @@ static inline int afindex(afi_t afi, safi_t safi)
 		default:
 			return BGP_AF_MAX;
 		}
+	/*BGP-LS implementation*/
+	case AFI_LINK_STATE:
+		switch (safi) {
+		case SAFI_LINK_STATE:
+			return BGP_AF_LINK_STATE;
+		case SAFI_LINK_STATE_VPN:
+			return BGP_AF_LINK_STATE_VPN;
+		default:
+			return BGP_AF_MAX;
+		}
+	/*BGP-LS implementation*/
+
+
 	default:
 		return BGP_AF_MAX;
 	}
@@ -2241,7 +2258,12 @@ static inline int peer_afi_active_nego(const struct peer *peer, afi_t afi)
 	    || peer->afc_nego[afi][SAFI_MPLS_VPN]
 	    || peer->afc_nego[afi][SAFI_ENCAP]
 	    || peer->afc_nego[afi][SAFI_FLOWSPEC]
-	    || peer->afc_nego[afi][SAFI_EVPN])
+	    || peer->afc_nego[afi][SAFI_EVPN]
+		/*BGP-LS implementation*/
+		|| peer->afc_nego[afi][SAFI_LINK_STATE]
+		|| peer->afc_nego[afi][SAFI_LINK_STATE])
+		/*BGP-LS implementation*/
+
 		return 1;
 	return 0;
 }
@@ -2261,7 +2283,12 @@ static inline int peer_group_af_configured(struct peer_group *group)
 	    || peer->afc[AFI_IP6][SAFI_MPLS_VPN]
 	    || peer->afc[AFI_IP6][SAFI_ENCAP]
 	    || peer->afc[AFI_IP6][SAFI_FLOWSPEC]
-	    || peer->afc[AFI_L2VPN][SAFI_EVPN])
+	    || peer->afc[AFI_L2VPN][SAFI_EVPN]
+		/*BGP-LS implementation*/
+		|| peer->afc[AFI_LINK_STATE][SAFI_LINK_STATE]
+		|| peer->afc[AFI_LINK_STATE][SAFI_LINK_STATE])
+		/*BGP-LS implementation*/
+
 		return 1;
 	return 0;
 }

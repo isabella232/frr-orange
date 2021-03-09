@@ -138,6 +138,7 @@ struct bgp_attr_srv6_l3vpn {
 	struct in6_addr sid;
 };
 
+
 /* BGP core attribute structure. */
 struct attr {
 	/* AS Path structure */
@@ -160,6 +161,14 @@ struct attr {
 
 	/* Path origin attribute */
 	uint8_t origin;
+
+	/*BGP-LS implementation*/
+	/* BGP Link-State attributes*/
+
+	struct mp_bgpls_nlri mp_bgpls_nlri; /*  BGP LS extension NLRI  */
+	struct ls_bgpls link_state_attr; /*  BGP Link State attribute  */
+
+	/*BGP-LS implementation*/
 
 	/* PMSI tunnel type (RFC 6514). */
 	enum pta_type pmsi_tnl_type;
@@ -353,6 +362,7 @@ extern void bgp_attr_finish(void);
 extern bgp_attr_parse_ret_t bgp_attr_parse(struct peer *, struct attr *,
 					   bgp_size_t, struct bgp_nlri *,
 					   struct bgp_nlri *);
+
 extern void bgp_attr_undup(struct attr *new, struct attr *old);
 extern struct attr *bgp_attr_intern(struct attr *attr);
 extern void bgp_attr_unintern_sub(struct attr *);
@@ -397,6 +407,12 @@ extern int bgp_mp_unreach_parse(struct bgp_attr_parser_args *args,
 				struct bgp_nlri *);
 extern bgp_attr_parse_ret_t
 bgp_attr_prefix_sid(struct bgp_attr_parser_args *args);
+
+/*BGP-LS implementation*/
+extern void bgp_put_link_state(struct stream *s,struct attr *attr);
+extern int mp_reach_value(struct bgp_attr_parser_args *args ,struct bgp_nlri *mp_update);
+extern int link_state_value(struct stream *s,struct peer *peer,uint16_t l_type,uint16_t l_length);
+/*BGP-LS implementation*/
 
 extern struct bgp_attr_encap_subtlv *
 encap_tlv_dup(struct bgp_attr_encap_subtlv *orig);

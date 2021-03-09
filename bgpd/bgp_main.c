@@ -66,6 +66,9 @@
 #include "bgpd/bgp_evpn_mh.h"
 #include "bgpd/bgp_nht.h"
 
+// BGP-LS
+#include "config.h"
+
 #ifdef ENABLE_BGP_VNC
 #include "bgpd/rfapi/rfapi_backend.h"
 #endif

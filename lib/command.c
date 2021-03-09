@@ -834,6 +834,7 @@ enum node_type node_parent(enum node_type node)
 	case BGP_IPV6M_NODE:
 	case BGP_EVPN_NODE:
 	case BGP_IPV6L_NODE:
+	case BGP_LS_NODE:	/*BGP-LS implementation*/
 	case BMP_NODE:
 		ret = BGP_NODE;
 		break;

@@ -104,6 +104,9 @@ bgpd_libbgp_a_SOURCES = \
 	bgpd/bgp_vpn.c \
 	bgpd/bgp_vty.c \
 	bgpd/bgp_zebra.c \
+	bgpd/bgp_ls_bgpls.c \
+	bgpd/bgp_bgpls_nlri.c \
+	bgpd/bgp_lsdb.c \
 	bgpd/bgpd.c \
 	bgpd/bgp_nb.c \
 	bgpd/bgp_nb_config.c \
@@ -183,6 +186,8 @@ noinst_HEADERS += \
 	bgpd/bgp_vpn.h \
 	bgpd/bgp_vty.h \
 	bgpd/bgp_zebra.h \
+	bgpd/bgp_ls.h \
+	bgpd/bgp_lsdb.h \
 	bgpd/bgpd.h \
 	bgpd/bgp_nb.h \
 	bgpd/bgp_trace.h \

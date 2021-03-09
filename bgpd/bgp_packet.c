@@ -37,6 +37,7 @@
 #include "queue.h"
 #include "filter.h"
 #include "lib_errors.h"
+#include "config.h"/*BGP-LS implementation*/
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_table.h"
@@ -1409,6 +1410,12 @@ static int bgp_open_receive(struct peer *peer, bgp_size_t size)
 			peer->afc[AFI_L2VPN][SAFI_EVPN];
 		peer->afc_nego[AFI_IP6][SAFI_FLOWSPEC] =
 			peer->afc[AFI_IP6][SAFI_FLOWSPEC];
+		/*BGP-LS implementation*/
+		peer->afc_nego[AFI_LINK_STATE][SAFI_LINK_STATE] =
+			peer->afc[AFI_LINK_STATE][SAFI_LINK_STATE];
+		peer->afc_nego[AFI_LINK_STATE][SAFI_LINK_STATE_VPN] =
+			peer->afc[AFI_LINK_STATE][SAFI_LINK_STATE_VPN];
+		/*BGP-LS implementation*/
 	}
 
 	/* When collision is detected and this peer is closed.
@@ -1858,6 +1865,41 @@ static int bgp_notify_receive(struct peer *peer, bgp_size_t size)
 		XFREE(MTYPE_TMP, peer->notify.data);
 		peer->notify.length = 0;
 	}
+
+/*BGP-LS implementation*/
+//	if (peer->afc[AFI_LINK_STATE][SAFI_LINK_STATE])
+//	        {
+//	          if (withdraw.length)	/*new version*/
+//	        	  bgp_nlri_parse (peer, NULL, &withdraw, 1);	/*new version*/
+//
+//	          if (update.length)	/*new version*/
+//	        	  bgp_nlri_parse (peer, NLRI_ATTR_ARG, &update, 0);	/*new version*/
+//
+//	          if (mp_update.length
+//	    	  && mp_update.safi == SAFI_LINK_STATE)
+//	        	  bgp_nlri_parse (peer, NLRI_ATTR_ARG, &mp_update, 0);
+//
+//	          if (mp_withdraw.length
+//	    	  && mp_withdraw.afi == AFI_LINK_STATE
+//	    	  && mp_withdraw.safi == SAFI_LINK_STATE)
+//	        	  bgp_nlri_parse (peer, NULL, &mp_withdraw, 1);
+//
+//	          if (! attribute_len && ! withdraw_len)
+//	    	{
+//	    	  /* End-of-RIB received */
+//	    	  SET_FLAG (peer->af_sflags[AFI_LINK_STATE][SAFI_LINK_STATE],
+//	    		    PEER_STATUS_EOR_RECEIVED);
+//
+//	    	  /* NSF delete stale route */
+//	    	  if (peer->nsf[AFI_LINK_STATE][SAFI_LINK_STATE])
+//	    	    bgp_clear_stale_route (peer, AFI_LINK_STATE, SAFI_LINK_STATE);
+//
+//	    	  //if (BGP_DEBUG (normal, NORMAL))	/*New version*/
+//	    	    //zlog (peer->log, LOG_DEBUG, "rcvd End-of-RIB for Link-State from %s", peer->host);	/*New version*/
+//	    	}
+//	        }
+/*BGP-LS implementation*/
+
 
 	bgp_notify.code = stream_getc(peer->curr);
 	bgp_notify.subcode = stream_getc(peer->curr);

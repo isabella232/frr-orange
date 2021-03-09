@@ -513,6 +513,7 @@ static int vtysh_execute_func(const char *line, int pager)
 		     || saved_node == BGP_IPV6_NODE
 		     || saved_node == BGP_FLOWSPECV4_NODE
 		     || saved_node == BGP_FLOWSPECV6_NODE
+			 || saved_node == BGP_LS_NODE	/*BGP-LS implementation*/
 		     || saved_node == BGP_IPV4M_NODE
 		     || saved_node == BGP_IPV4L_NODE
 		     || saved_node == BGP_IPV6L_NODE
@@ -813,6 +814,7 @@ int vtysh_mark_file(const char *filename)
 			     || prev_node == BGP_IPV6_NODE
 			     || prev_node == BGP_FLOWSPECV4_NODE
 			     || prev_node == BGP_FLOWSPECV6_NODE
+				 || prev_node == BGP_LS_NODE	/*BGP-LS implementation*/
 			     || prev_node == BGP_IPV4L_NODE
 			     || prev_node == BGP_IPV6L_NODE
 			     || prev_node == BGP_IPV4M_NODE
@@ -1449,6 +1451,14 @@ static struct cmd_node bgp_ipv6l_node = {
 	.parent_node = BGP_NODE,
 	.prompt = "%s(config-router-af)# ",
 };
+/*BGP-LS implementation*/
+static struct cmd_node bgp_ls_node = {
+	.name = "bgp ls",
+	.node = BGP_LS_NODE,
+	.parent_node = BGP_NODE,
+	.prompt = "%s(config-router-af)# ",
+};
+/*BGP-LS implementation*/
 
 #ifdef ENABLE_BGP_VNC
 static struct cmd_node bgp_vnc_defaults_node = {
@@ -1721,6 +1731,28 @@ DEFUNSH(VTYSH_BGPD, address_family_flowspecv6, address_family_flowspecv6_cmd,
 	vty->node = BGP_FLOWSPECV6_NODE;
 	return CMD_SUCCESS;
 }
+
+/*BGP-LS implementation*/
+DEFUNSH(VTYSH_BGPD, address_family_ls, address_family_ls_cmd,
+	"address-family link-state",
+	"Enter Address Family command mode\n"
+	"Address Family\n"
+	"Address Family Modifier\n")
+{
+  vty->node = BGP_LS_NODE;
+  return CMD_SUCCESS;
+}
+
+DEFUNSH (VTYSH_BGPD, address_family_ls_safi, address_family_ls_safi_cmd,
+	"address-family link-state link-state",
+	"Enter Address Family command mode\n"
+	"Address Family\n"
+	"Address Family Modifier\n")
+{
+  vty->node = BGP_LS_NODE;
+  return CMD_SUCCESS;
+}
+/*BGP-LS implementation*/
 
 DEFUNSH(VTYSH_BGPD, address_family_ipv4_multicast,
 	address_family_ipv4_multicast_cmd, "address-family ipv4 multicast",
@@ -2319,7 +2351,8 @@ DEFUNSH(VTYSH_BGPD, exit_address_family, exit_address_family_cmd,
 	    || vty->node == BGP_IPV6L_NODE || vty->node == BGP_IPV6M_NODE
 	    || vty->node == BGP_EVPN_NODE
 	    || vty->node == BGP_FLOWSPECV4_NODE
-	    || vty->node == BGP_FLOWSPECV6_NODE)
+	    || vty->node == BGP_FLOWSPECV6_NODE
+		|| vty->node == BGP_LS_NODE)	/*BGP-LS implementation*/
 		vty->node = BGP_NODE;
 	return CMD_SUCCESS;
 }
@@ -4624,4 +4657,10 @@ void vtysh_init_vty(void)
 	install_element(CONFIG_NODE, &no_vtysh_password_cmd);
 	install_element(CONFIG_NODE, &vtysh_enable_password_cmd);
 	install_element(CONFIG_NODE, &no_vtysh_enable_password_cmd);
+
+	/* BGP-LS implementation */
+	install_node(&bgp_ls_node);
+	install_element(BGP_LS_NODE, &vtysh_exit_bgpd_cmd);
+	install_element(BGP_LS_NODE, &vtysh_quit_bgpd_cmd);
+
 }
