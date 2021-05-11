@@ -124,6 +124,8 @@ static void lsp_destroy(struct isis_lsp *lsp)
 
 	ISIS_FLAGS_CLEAR_ALL(lsp->SSNflags);
 
+	isis_te_lsp_event(lsp, LSP_DEL);
+
 	lsp_clear_data(lsp);
 
 	if (!LSP_FRAGMENT(lsp->hdr.lsp_id)) {
@@ -334,6 +336,7 @@ void lsp_inc_seqno(struct isis_lsp *lsp, uint32_t seqno)
 	lsp->hdr.seqno = newseq;
 
 	lsp_pack_pdu(lsp);
+	isis_te_lsp_event(lsp, LSP_INC);
 	isis_spf_schedule(lsp->area, lsp->level);
 }
 
@@ -586,8 +589,10 @@ void lsp_update(struct isis_lsp *lsp, struct isis_lsp_hdr *hdr,
 			lsp_link_fragment(lsp, lsp0);
 	}
 
-	if (lsp->hdr.seqno)
+	if (lsp->hdr.seqno) {
+		isis_te_lsp_event(lsp, LSP_UPD);
 		isis_spf_schedule(lsp->area, lsp->level);
+	}
 }
 
 /* creation of LSP directly from what we received */
@@ -652,6 +657,7 @@ struct isis_lsp *lsp_new(struct isis_area *area, uint8_t *lsp_id,
 void lsp_insert(struct lspdb_head *head, struct isis_lsp *lsp)
 {
 	lspdb_add(head, lsp);
+	isis_te_lsp_event(lsp, LSP_ADD);
 	if (lsp->hdr.seqno)
 		isis_spf_schedule(lsp->area, lsp->level);
 }
@@ -2015,6 +2021,7 @@ int lsp_tick(struct thread *thread)
 					lsp_flood(lsp, NULL);
 				/* 7.3.16.4 c) record the time to purge
 				 * FIXME */
+				isis_te_lsp_event(lsp, LSP_TICK);
 				isis_spf_schedule(lsp->area, lsp->level);
 			}
 

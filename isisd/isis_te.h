@@ -88,8 +88,10 @@ typedef enum _interas_mode_t { off, region, as, emulate } interas_mode_t;
 			   && e->status != EXT_ADJ_SID		\
 			   && e->status != EXT_LAN_ADJ_SID)
 #define IS_MPLS_TE(a)	(a && a->status == enable)
+#define IS_EXPORT_TE(a) (a->export)
 
 /* Per area MPLS-TE parameters */
+struct ls_ted;
 struct mpls_te_area {
 	/* Status of MPLS-TE: enable or disable */
 	status_t status;
@@ -103,11 +105,20 @@ struct mpls_te_area {
 
 	/* MPLS_TE router ID */
 	struct in_addr router_id;
+
+	/* Link State Database */
+	struct ls_ted *ted;
+	bool export;
 };
+
+enum lsp_event { LSP_ADD, LSP_UPD, LSP_DEL, LSP_INC, LSP_TICK };
 
 /* Prototypes. */
 void isis_mpls_te_init(void);
 void isis_link_params_update(struct isis_circuit *, struct interface *);
 int isis_mpls_te_update(struct interface *);
+void isis_te_lsp_event(struct isis_lsp *lsp, enum lsp_event event);
+int isis_te_sync_ted(struct zapi_opaque_reg_info dst);
+void isis_te_init_ted(struct isis_area *area);
 
 #endif /* _ZEBRA_ISIS_MPLS_TE_H */
